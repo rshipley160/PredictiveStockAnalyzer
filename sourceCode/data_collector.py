@@ -16,6 +16,8 @@ def get_quote_data(symbol='SBIN.NS', data_range='1d', data_interval='15m'):
     The allowed intervals are: "1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo
     '''
     res = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/{}?range={}&interval={}".format(symbol,data_range,data_interval))
+    # Try replacing 'range=' with 'preiod1=' and 'period2=' and using specific UNIX date/time codes
+    # You can get UNIX time code through the datetime module
     data = res.json()
     body = data['chart']['result'][0]
     dt = datetime.datetime
