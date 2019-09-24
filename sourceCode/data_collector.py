@@ -5,12 +5,39 @@ import arrow
 import os
 import datetime
 
-
-def getStock(strTicker, startDate, endDate, startTime, endTime, interval):
-    ## Need code that takes in parameters above and uses get_quote_data to fulfill requests
+def getIndustryIndicators(startTime, endTime):
+    '''
+    return a list of the 11 indicator stocks for each industry
+    Stocks must have continuous data within the start and end times.
+    '''
+    industries = ["basic_materials","communication_services","consumer_cyclical","consumer_defensive","energy","financial_services","healthcare","industrials","real_estate","technology","utilities"]
     pass
 
-def get_quote_data(symbol='SBIN.NS', data_range='1d', data_interval='15m'):
+def getHighestMarketCap(strIndustry, startTime, endTime):
+    '''
+    return the stock with the highest market cap in the desired industry
+    Make sure that the indcator is available for the given time frame
+    yahoo_fin.get_quote_table returns a dictionary that contains market cap data
+    '''
+    pass
+
+def timeCode(hour, minute, day, month, year):
+    '''
+    Convert date and time into UNIX code
+    '''
+    pass
+    
+    
+def getStock(strTicker, startTime, endTime, interval, metric):
+    '''
+    Use Yahoo API to get stock data from startDate/startTime to endDate/endTime
+    Use selected interval if appropriate, smallest useable if not
+    Will have to format to UNIX datetime code for use with the API
+    Metrics include close, open, high, low
+    '''
+    pass
+
+def get_quote_data(symbol, data_range='1d', data_interval='15m'):
     '''
     The allowed ranges are: "1d","5d","1mo","3mo","6mo","1y","2y","5y","10y","ytd","max"
     The allowed intervals are: "1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo
