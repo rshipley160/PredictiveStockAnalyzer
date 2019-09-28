@@ -4,6 +4,36 @@ import requests
 import arrow
 import os
 import datetime
+import time
+import numpy as np
+
+def convert_to_unix(year, month, day, hour=0, minute=0, second=0):
+    return int(time.mktime(time.strptime('{}-{}-{} {}:{}:{}'.format(year, month, day, hour, minute, second), '%Y-%m-%d %H:%M:%S')))
+
+def convert_from_unix(unixCode):
+    return time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime(unixCode))
+
+def getStock(strTicker, unixStart, unixEnd, interval='1m', metric='close'):
+    '''
+    Use Yahoo API to get stock data from startDate/startTime to endDate/endTime
+    Use selected interval if appropriate, smallest useable if not
+    Metrics include close, open, high, low
+    Returns a 1D array containing data for the selected stock and metric
+    '''
+    # Get data in .json format
+    res = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(strTicker,unixStart,unixEnd,interval))
+    # Convert .json into nested dictionary format
+    data = res.json()
+    # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
+    body = data['chart']['result'][0]
+    #Get the date
+    dt = datetime.datetime
+    # make a Series (array) of time stamps
+    dt = pd.Series(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None), body['timestamp']), name='Datetime')
+    # index the info by the time frame
+    df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
+
+    return np.asarray(df.loc[:][metric])
 
 def getIndustryIndicators(startTime, endTime):
     '''
@@ -18,22 +48,6 @@ def getHighestMarketCap(strIndustry, startTime, endTime):
     return the stock with the highest market cap in the desired industry
     Make sure that the indcator is available for the given time frame
     yahoo_fin.get_quote_table returns a dictionary that contains market cap data
-    '''
-    pass
-
-def timeCode(hour, minute, day, month, year):
-    '''
-    Convert date and time into UNIX code
-    '''
-    pass
-    
-    
-def getStock(strTicker, startTime, endTime, interval, metric):
-    '''
-    Use Yahoo API to get stock data from startDate/startTime to endDate/endTime
-    Use selected interval if appropriate, smallest useable if not
-    Will have to format to UNIX datetime code for use with the API
-    Metrics include close, open, high, low
     '''
     pass
 
