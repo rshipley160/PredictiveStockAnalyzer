@@ -83,4 +83,4 @@ def performance(predicted_data, true_data):
     return 1 - sum(distances) / len(distances)
 
 if __name__ == "__main__":    
-    
+    pass

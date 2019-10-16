@@ -23,7 +23,20 @@ from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 import ssl
 import ast
-import os
+import os.path
+from os import path
+import pickle
+import math
+import sys
+
+printDebug = False
+
+def debug(string):
+    '''
+    Used instead of print statements so I can turn all of the prints off with a single change
+    '''
+    global printDebug
+    if printDebug: print(string)
 
 
 def convert_to_unix(year, month, day, hour=0, minute=0):
@@ -37,7 +50,7 @@ def convert_from_unix(unixCode):
     '''
     Return a formatted string displaying the date/time represented by the given unix timestamp
     '''
-    return time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime(unixCode))
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(unixCode))
 
 
 def patch_data(data):
@@ -110,9 +123,6 @@ class DataCollector:
     # and sortedStocks is a list of tuples containing of the form (ticker, marketCap) sorted by marketCap 
     sortedStocks = {}
 
-    # Will contain a list of industry indicator stock tickers after init
-    industryIndicators = []
-
     # A constant list of all the financial sectors Yahoo divides stocks into
     INDUSTRIES = ['basic_materials','communication_services','consumer_cyclical','consumer_defensive','energy','financial_services','healthcare','industrials','real_estate','technology','utilities']
     
@@ -122,57 +132,41 @@ class DataCollector:
     '''     Static methods      '''
     @staticmethod
     def setup():
+        if DataCollector.initialized: return
+        debug("starting setup")
         DataCollector.loadIndustryStocks()
 
-        DataCollector.loadIndustryIndicators()
+        DataCollector.loadMarketCap()
 
         DataCollector.initialized = True
-
+        debug("setup complete")
 
     @staticmethod
     def loadIndustryStocks():
         '''
         Load industryStocks dictionary with stocks labeled by industry
         '''
+        debug("Loading industryStocks dictionary...")
         industryFile = open('data\Industries.txt','r')
         industries = {}
         for industryLine in industryFile.readlines():
             industry = industryLine.rstrip().split(',')
             DataCollector.industryStocks[industry[0]] = industry[1:]
-
+        debug("industryStocks loaded")
 
     @staticmethod
-    def getHighestMarketCap(industry):
+    def loadMarketCap():
         '''
-        return the stock ticker that has the highest market cap in the desired industry
-        Make sure that the indcator is available
+        load the sorted and unsorted market cap dictionaries
         '''
-        tickers = DataCollector.industryStocks[industry]
-        if industry not in DataCollector.marketCapDict.keys():
-            DataCollector.__loadMarketCapDict(industry)
-        # sortedStocks is a list of tuples containing key value pairs that are ordered by market cap
-        if industry not in DataCollector.sortedStocks.keys():
-            DataCollector.sortedStocks[industry] = sorted(DataCollector.marketCapDict[industry].items(), key=lambda x:x[1], reverse=True)
-
-        # Go down the sorted list of stocks 
-        # and pick the first one that has good data available
-        for stock in DataCollector.sortedStocks[industry]:
-            # Use two weeks ending at the current hour as the threshold
-            today = datetime.datetime.now().strftime("%Y/%m/%d/%H").split("/")
-            end = convert_to_unix(today[0],today[1],today[2],today[3])
-            backdate = (datetime.datetime.now() - datetime.timedelta(weeks=2)).strftime("%Y/%m/%d/%H").split("/")
-            start = convert_to_unix(backdate[0],backdate[1],backdate[2],backdate[3])
-
-
-            collector = DataCollector(stock[0], start, end, '1h', 'close')
-            try:
-                # Run these two lines to make sure data can be collected
-                raw = collector.collect()
-                # and patched if needed
-                patched = patch_data(raw)
-                return stock[0]
-            except ValueError:
-                continue
+        debug("Loading market cap dictionaries...")
+        if len(DataCollector.industryStocks.keys()) == 0: DataCollector.loadIndustryStocks()
+        for industry in DataCollector.industryStocks.keys():
+            if industry not in DataCollector.marketCapDict.keys(): DataCollector.__loadMarketCapDict(industry)
+                # sortedStocks is a list of tuples containing key value pairs that are ordered by market cap
+            if industry not in DataCollector.sortedStocks.keys():
+                DataCollector.sortedStocks[industry] = sorted(DataCollector.marketCapDict[industry].items(), key=lambda x:x[1], reverse=True)
+        debug("Market cap dictionaries loaded")
 
 
     @staticmethod
@@ -182,28 +176,49 @@ class DataCollector:
         Splits sector loading among multiple threads
         Load marketCapDict[industry] with stock values
         Uses multiple threads to load stocks in parallel
+        Loads from dictionary if dictionary is available
         '''
-        if industry not in DataCollector.industryStocks:
-            DataCollector.loadIndustryStocks()
+        debug("Loading market cap dict for "+industry+"...")
 
-        numStocks = len(DataCollector.industryStocks[industry])
+        if path.exists("data\\marketCapDict_"+industry+".dat"):
+            debug("File found. Loading dictionary")
+            obj_file = open("data\\marketCapDict_"+industry+".dat",'rb')
+            DataCollector.marketCapDict[industry] = pickle.load(obj_file)
+            obj_file.close()
+        else: 
+            debug("No file found. Creating dictionary")            
+
+            if industry not in DataCollector.industryStocks.keys():
+                DataCollector.loadIndustryStocks()
+            numStocks = len(DataCollector.industryStocks[industry])
         
+            #Split the work between 8 threads
+            threads = []
+            numThreads = 8
+            
+            section_length = math.ceil(numStocks / numThreads)
+            debug(str(numStocks)+"to be loaded")
+            start = 0
+            end = section_length
+            for i in range(numThreads):
+                # Each thread will get some portion of the total list of stock tickers in the industry
+                # and loads that section into the dictionary
+                threads.append(threading.Thread(target=DataCollector.__loadCapSection, args=(start,end,industry)))
+                threads[i].start()
+                # Set the start and end of the next thread's section
+                start = end
+                end = end + section_length
+                if end > numStocks: end = numStocks 
+            for i in range(numThreads):
+                threads[i].join()
 
-        threads = []
-        numThreads = 8
-        section_length = int( numStocks / numThreads)
+            #Save to a binary file that the program knows how to open for reuse
+            if not path.exists("data"): os.makedirs("data")
+            obj_file = open("data\\marketCapDict_"+industry+".dat",'wb')
+            pickle.dump(DataCollector.marketCapDict[industry], obj_file)
+            obj_file.close()
 
-        start = 0
-        end = section_length
-        for i in range(numThreads):
-            threads.append(threading.Thread(target=DataCollector.__loadCapSection, args=(start,end,industry)))
-            threads[i].start()
-            start = end
-            end = end + section_length
-            if end > numStocks: end = numStocks 
-        for i in range(numThreads):
-            threads[i].join()
-
+        debug("Market cap dict for "+industry+" loaded")
 
     @staticmethod
     def __loadCapSection(start, end, industry):
@@ -211,6 +226,7 @@ class DataCollector:
         Helper method to __loadMarketCapDict
         This is what each thread uses to load a segment of the stocks in the industry
         '''
+        debug("Loading market cap for stocks "+str(start)+"-"+str(end)+" from "+industry+"...")
         stocks = DataCollector.industryStocks[industry]
         for i in range(start,end):
             try:
@@ -219,20 +235,7 @@ class DataCollector:
                 DataCollector.marketCapDict[industry][stocks[i]] = DataCollector.convertCap(DataCollector.marketCap(stocks[i]))
             except ValueError: pass
             except urllib.error.HTTPError: pass
-
-
-    @staticmethod
-    def loadIndustryIndicators():
-        '''
-        loads industryIndicators list with the ticker of the stock in each industrythat has the highest market cap and has data available
-        Note: Takes a while to load, time dependent on how many threads can be executed concurrently
-        '''
-        startTime = time.time()
-        for industry in DataCollector.INDUSTRIES:
-            print("industry: "+industry)
-            stock = DataCollector.getHighestMarketCap(industry)
-            DataCollector.industryIndicators.append(stock)
-        print(time.time() - startTime)
+        debug("Market caps "+str(start)+"-"+str(end)+" from "+industry+" loaded")
 
 
     @staticmethod
@@ -240,6 +243,7 @@ class DataCollector:
         '''
         Returns the float conversion of the given market cap string
         '''
+        debug("Converting market cap...")
         if type(strMarketCap) == float: return strMarketCap
         if type(strMarketCap) != str: raise ValueError
         
@@ -255,6 +259,7 @@ class DataCollector:
             if unit == 'T':
                 amount *= 1e12
         else: amount = float(strMarketCap)
+        debug("Market cap converted")
         return amount
 
     
@@ -265,6 +270,7 @@ class DataCollector:
         Note: Not our original source code, however it is unattributed on the website, as well as unlicensed
         Source: https://www.promptcloud.com/blog/how-to-scrape-yahoo-finance-data-using-python/ 
         '''
+        debug("Getting market cap for "+ticker+"...")
         #Create stock page url
         url = "https://in.finance.yahoo.com/quote/{}?".format(ticker)
         # Making the website believe that you are accessing it using a Mozilla browser
@@ -280,59 +286,204 @@ class DataCollector:
         for td in soup.findAll('td', attrs={'data-test': 'MARKET_CAP-value'}):
             for span in td.findAll('span', recursive=False):
                 marketCap = span.text.strip()
-                print('found '+marketCap)
+        debug("Market cap retrieved for "+ticker)
         return marketCap
 
     '''     Instance Methods        '''
-    def __init__(self, ticker, unixStart, unixEnd, interval, metric):
+    def __init__(self, ticker, unixStart, unixEnd, interval, metric, __full_setup = True):
+        '''
+        Set up the DataCollecter using specified parameters
+        ticker - ticker of the stock you wish to collect data from
+        unixStart - precise date and time you wish to begin retrieving data, converted to a unix timestamp
+        unixEnd - precise date and time you wish to stop retrieving data, converted to a unix timestamp
+        interval - the time interval used, or the granularity of the data
+                Allowed intervals are 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk
+        metric - the type of stock metric you'd like to use - open, high, low, close
+        __full_setup - whether or not this constructor is a full DataCollector
+                Determines if it can attempt setup of the static class
+                And if the full attributes of the stock will be loaded on initialization
+                Some load methods use shallow DataCollectors, this is to avoid unwanted recursion
+        '''
+        if not DataCollector.initialized and __full_setup: DataCollector.setup()
+        debug("Intializing stock "+ticker+"...")
         self.start = unixStart
         self.end = unixEnd
         self.interval = interval
         self.metric = metric
         self.stock = ticker
+        self.competitors = []
+        self.industry = None
+        self.capIndex = None
+        self.competitorNames = []
+        self.competitorData = []
+        self.indicatorNames = []
+        self.indicatorData  = []
+        self.mainData = []
+        self.dateTimeIndex = []
+        if __full_setup: 
+            self.mainData = self.collect()
+            self.industry = self.getIndustry()
+            self.loadCompetitors()
+            self.loadIndicators()
+            self.capIndex = self.getMarketCapIndex
+        debug("Intialization complete")
+
+
+    def getIndustry(self):
+        '''
+        Returns the industry this stock belongs to
+        '''
+        if self.industry != None: return self.industry
+        debug("Finding industry for "+self.stock+"...")
+        for industry in DataCollector.INDUSTRIES:
+            for stock in DataCollector.industryStocks[industry]:
+                if stock == self.stock: 
+                    debug("Industry Found")
+                    return industry 
         
-    
-    def collect(self, patch=True):
+
+    def collect(self, patch=True, dateTimeIndex = None):
         '''
         Use Yahoo API to get stock data
         Metrics include close, open, high, low
         Returns a 1D array containing data for the selected stock and metric
         '''
+        if self.mainData != []: return self.mainData
+        debug("collecting data for "+self.stock+"...")
         # Get data in .json format
         url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,self.start,self.end,self.interval)
         res = requests.get(url)
         # Convert .json into nested dictionary format
         data = res.json()
         # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
-        body = data['chart']['result'][0]
-        #Get the date
-        dt = datetime.datetime
-        # make a Series (array) of time stamps
-        dt = pd.Series(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None), body['timestamp']), name='Datetime')
-        # index the info by the time frame
+        chart = data['chart']
+        result = chart['result']
+        if result == None: raise ValueError
+        body = result[0]
+        dt = list(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S"), body['timestamp']))
         df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
-        try: 
-            patched = patch_data(np.asarray(df.loc[:][self.metric]))
-        except: patched = np.asarray(df.loc[:][self.metric])
-        return patched
+        if dateTimeIndex == None:
+            self.dateTimeIndex = dt
+
+            if patch:
+                try: 
+                    patched = patch_data(np.asarray(df.loc[:][self.metric]))
+                except: patched = np.asarray(df.loc[:][self.metric])
+            else: patched = np.asarray(df.loc[:][self.metric])
+            debug("collection completed")
+            return patched
+        else:
+            # index the info by the time frame
+            raw = []
+            for time in dateTimeIndex:
+                try: 
+                    raw.append(df.loc[time][self.metric])
+                except:
+                    raw.append(np.nan)
+            if patch:
+                try: 
+                    patched = patch_data(np.asarray(raw))
+                except: patched = np.asarray(raw)
+            else: patched = np.asarray(raw)
+            debug("collection completed")
+            return patched
+                 
 
 
-def main():
-    pass
+
+    def getMarketCapIndex(self):
+        '''
+        Return this stock's index in the static sortedStocks list, which is ordered by market caps
+        '''
+        if self.capIndex != None: return self.capIndex
+        for i in range(len(DataCollector.sortedStocks[self.getIndustry()])):
+            if DataCollector.sortedStocks[self.getIndustry()][i][0] == self.stock: return i
+
+
+    def loadIndicators(self):
+        '''
+        Load the list of indicator names and stock data as specified by this object's attributes
+        '''
+        debug("Loading industry indicators...")
+        if self.indicatorNames != [] and self.indicatorData != []: return
+        if self.dateTimeIndex == []: self.mainData = self.collect()
+        for industry in DataCollector.INDUSTRIES:
+            nextIndustry = False
+            # Go down the sorted list of stocks 
+            # and pick the first one that has good data available
+            for stock in DataCollector.sortedStocks[industry]:
+                collector = DataCollector(stock[0], self.start, self.end, self.interval, self.metric, False)
+                try:
+                    # Run these two lines to make sure data can be collected
+                    raw = collector.collect(dateTimeIndex = self.dateTimeIndex)
+                    # and patched if needed
+                    patched = patch_data(raw)
+                    debug(stock[0]+" has the highest market cap for "+industry)
+                    self.indicatorNames.append(stock[0])
+                    self.indicatorData.append(patched)
+                    break
+                except ValueError:
+                    continue
+        debug("Industry indicators loaded")
+
+
+    def loadCompetitors(self):
+        '''
+        Load a list of 4 stock tickers which are the nearest on both sides of the stock
+        Also loads data for each competitor into a list
+        returns the 4 nearest in market cap if it is not possible to get two on each side
+        Throws a value error if 4 competitor stocks cannot be identified
+        '''
+        index = self.getMarketCapIndex()
+        compsLeft = 4
+        movingDown = True
+        competitors = []
+        seek_index = index
+        if index == None: return []
+        while (compsLeft > 0):
+            if seek_index <= 0:
+                seek_index = index
+                movingDown = False
+            if compsLeft <= 2 and movingDown:
+                seek_index = index
+                movingDown = False
+            if movingDown:
+                seek_index -= 1
+            else: 
+                seek_index += 1
+            try:
+                stock = DataCollector.sortedStocks[self.getIndustry()][seek_index][0]
+                debug("Attempting to collect "+stock+"...")
+
+                competitor = DataCollector(stock, self.start, self.end, self.interval, self.metric, False)
+                raw = competitor.collect(dateTimeIndex = self.dateTimeIndex)
+                patched = patch_data(raw)
+                self.competitorNames.append(stock[0])
+                self.competitorData.append(patched)
+                compsLeft -= 1
+                debug("Collection succeeded")
+            except: debug("Collection failed")
+            if seek_index >= len(DataCollector.sortedStocks[self.getIndustry()]): raise ValueError
+
+
+    
 
 
 def parse(sector):
-
+    '''
+    May be useful in the future for getting the list of stocks in each sector
+    Right now it is not used at all
+    '''
     ctx = ssl.create_default_context()
     ctx.check_hostname = false
     ctx.verify_mode = ssl.cert_none
 
     url = "http://finance.yahoo.com/ms_{}".format(sector)
     response = requests.get(url, verify=False)
-    print ("Parsing %s"%(url))
+    debug ("Parsing %s"%(url))
     time.sleep(4)
     parser = html.fromstring(response.text)
-    print(parser)
+    debug(parser)
     '''
 	summary_table = parser.xpath('//div[contains(@data-test,"summary-table")]//tr')
 	summary_data = OrderedDict()
@@ -356,10 +507,26 @@ def parse(sector):
 		summary_data.update({'1y Target Est':y_Target_Est,'EPS (TTM)':eps,'Earnings Date':earnings_date,'ticker':ticker,'url':url})
 		return summary_data
 	except:
-		print ("Failed to parse json response")
+		debug ("Failed to parse json response")
 		return {"error":"Failed to parse json response
     '''
 
+def main():
+
+    start = convert_to_unix(2009,1,1)
+    end = convert_to_unix(2019,1,1)
+   
+    DataCollector.setup()    
+    stock = DataCollector('ORCL',start,end, '1d', 'close')
+    # print(stock.dateTimeIndex)
+    #for i in range(4):
+    #    print(len(stock.competitorData[i]), end="\t") 
+    #for i in range(11):
+    #    print(len(stock.indicatorData[i]), end="\t")
+
+
+
 
 if __name__ == "__main__":
+   printDebug = True
    main()
