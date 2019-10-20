@@ -106,7 +106,10 @@ def average_fill(data, start, end):
 
 
 class DataCollector:
-    '''     Static variables used in static and instance methods    '''
+    '''     
+    Class used to collect all data required to make predictions about a stock
+    See constructor for detailed explanation of use
+    '''
 
     # Will contain a dictionary of the form {industry:stocks}...
     # where industries is a string in INDUSTRIES
@@ -141,6 +144,7 @@ class DataCollector:
         DataCollector.initialized = True
         debug("setup complete")
 
+
     @staticmethod
     def loadIndustryStocks():
         '''
@@ -153,6 +157,7 @@ class DataCollector:
             industry = industryLine.rstrip().split(',')
             DataCollector.industryStocks[industry[0]] = industry[1:]
         debug("industryStocks loaded")
+
 
     @staticmethod
     def loadMarketCap():
@@ -219,6 +224,7 @@ class DataCollector:
             obj_file.close()
 
         debug("Market cap dict for "+industry+" loaded")
+
 
     @staticmethod
     def __loadCapSection(start, end, industry):
@@ -288,6 +294,7 @@ class DataCollector:
                 marketCap = span.text.strip()
         debug("Market cap retrieved for "+ticker)
         return marketCap
+
 
     '''     Instance Methods        '''
     def __init__(self, ticker, unixStart, unixEnd, interval, metric, __full_setup = True):
@@ -388,8 +395,6 @@ class DataCollector:
             debug("collection completed")
             return patched
                  
-
-
 
     def getMarketCapIndex(self):
         '''
