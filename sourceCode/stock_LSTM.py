@@ -7,8 +7,16 @@ from numpy import newaxis
 from LSTM_base.core.utils import Timer
 from LSTM_base.core.data_processor import DataLoader
 from keras.layers import Dense, Activation, Dropout, LSTM
-from keras.models import Sequential, load_model
+from keras.models import Sequential, load_model as load
 from keras.callbacks import EarlyStopping, ModelCheckpoint
+import sourceCode.stock_predictor as Predictor
+from sourceCode.data_collector import convert_to_unix, DataCollector as DC
+import random
+
+debugging = False
+
+def debug(string):
+    if debugging == True: print(str(string))
 
 class stock_LSTM:
     """ This class is intended to include strictly the methods used for creating and interacting with the model itself"""
@@ -27,11 +35,11 @@ class stock_LSTM:
         self.model.add(Dense(1, activation="linear"))
         self.model.compile(loss=loss, optimizer=optimizer, metrics = ['accuracy'])
 
-        print('[Model] Model Compiled')
+        debug('[Model] Model Compiled')
 
         return self.model
 
-    def train(self, x, y, epochs=1, batch_size=32, save_dir="saved_models", save_name=None):
+    def train(self, x, y, epochs=1, batch_size=32, save_dir="saved_models", save_name=None, save=True):
         print('[Model] Training Started')
         print('[Model] %s epochs, %s batch size' % (epochs, batch_size))
 		
@@ -49,17 +57,19 @@ class stock_LSTM:
 	        callbacks=callbacks,
         )
 
-        self.model.save(save_fname)
+        debug('[Model] Training Completed.') 
 
-        print('[Model] Training Completed. Model saved as %s' % save_fname)
+        if save:
+            self.model.save(save_fname)
+            debug('Model saved as %s' % save_fname)
 
     def load_model(self, filepath):
-	    print('[Model] Loading model from file %s' % filepath)
-	    self.model = load_model(filepath)
+	    debug('[Model] Loading model from file %s' % filepath)
+	    self.model = load(filepath)
         
     def predict_point_by_point(self, data):
         # Predict each timestep given the last sequence of true data, in effect only predicting 1 step ahead each time
-        print('[Model] Predicting Point-by-Point...')
+        debug('[Model] Predicting Point-by-Point...')
         predicted = self.model.predict(data)
         predicted = np.reshape(predicted, (predicted.size,))
         return predicted
@@ -82,5 +92,43 @@ def performance(predicted_data, true_data):
     if len(distances) == 0: return 0
     return 1 - sum(distances) / len(distances)
 
-if __name__ == "__main__":    
-    pass
+if __name__ == "__main__":
+    
+    debugging = True
+    model = stock_LSTM()
+    DC.setup()
+    
+    #Model prediction
+    start = convert_to_unix(2009,10,10)
+    end = convert_to_unix(2019,10,12)
+    model.load_model('saved_models\\25step-16epoch-16batch-hourly-1each.h5')
+    for industry in DC.INDUSTRIES:
+        for stock in range(len(DC.industryStocks[industry])):
+            try:
+                stock = DC.industryStocks[industry][stock]
+                collector = DC(stock, start, end, '1mo', 'close')
+            except:
+                continue
+            input = Predictor.compileData(collector, 24)
+            output = Predictor.DataFormatter(collector.mainData, 24).get_output_windows()
+            predictions = model.predict_point_by_point(input)
+            print(stock+": "+str(performance(predictions,output)))
+            plot_results(predictions, output)
+
+    '''   
+    # Model training 
+    start = convert_to_unix(2019,3,31)
+    end = convert_to_unix(2019,9,28)
+    model.build_model(input_steps=24)
+    for industry in DC.INDUSTRIES:
+        try:
+            stock = DC.industryStocks[industry][random.randint(0,len(DC.industryStocks[industry])-1)]
+            collector = DC(stock, start, end, '1h', 'close')
+        except:
+            continue
+        input = Predictor.compileData(collector, 24)
+        output = Predictor.DataFormatter(collector.mainData, 24).get_output_windows()
+        model.train(input, output, 16, 16, save=False)
+        model.model.save('saved_models\\25step-16epoch-16batch-hourly-1each.h5')
+    '''
+

@@ -14,40 +14,49 @@ import math
 import numpy as np
 import pandas as pd
 import random
+from threading import Thread
 
 class DataFormatter():
-    """A class for loading and transforming 1D arrays of stock data into normalized windows"""
+    """     A class for loading and transforming 1D arrays of stock data into normalized windows    """
 
-    def __init__(self, data, seq_len, ):
+    def __init__(self, data, seq_len):
+        '''
+        data - 1D array of data (input)
+        seq_len - the length of each window to be returned
+        '''
         self.data = data
-        self.len_data = len(data)
-        self.len_windows = None
+        self.data_len = len(data)
+        # Range of the data
         self.data_range = None
+        # Median of the data
         self.median = None
         self.seq_len = seq_len
+        # Go ahead and normalize
+        self.normalize()
 
-    def get_input_windows(self, normalise=True):
+    def get_input_windows(self, normalize=True):
         '''
-        Create input windows
+        Create input windows based on object values
+        returns an array of sub-arrays which are of length self.seq_len
         '''
-        if self.data_range == None and normalise: self.normalize()
+        if not normalize: self.de_normalize()
         data_x = []
-        if self.len_data < self.seq_len: raise ValueError("Total data length less than sequence length")
-        for i in range(self.len_data - self.seq_len):
+        if self.data_len < self.seq_len: raise ValueError("Total data length less than sequence length")
+        for i in range(self.data_len - self.seq_len):
             data_x.append(self.data[i:i+self.seq_len])
         return np.array(data_x)
 
-    def get_output_windows(self):
-        if self.data_range == None: self.normalize()
+    def get_output(self, normalize=True):
+        if not normalize: self.de_normalize()
         data_y = []
-        for i in range(self.len_data - self.seq_len):
+        for i in range(self.data_len - self.seq_len):
             data_y.append(self.data[self.seq_len+i])
         return np.array(data_y)
 
     def get_input_generator(self, normalize=True):
-        if self.data_range == None and normalize: self.normalize()
-        if self.len_data < self.seq_len: raise ValueError("Total data length less than sequence length")
-        for i in range(self.len_data - self.seq_len):
+        if not normalize: self.de_normalize()
+        if self.data_len < self.seq_len: raise ValueError("Total data length less than sequence length")
+        for i in range(self.data_len - self.seq_len):
             yield self.data[i:i+self.seq_len]
 
     def normalize(self):
@@ -69,6 +78,26 @@ class DataFormatter():
         if self.data_range == None: return
         self.data = [point * self.data_range + self.median for point in self.data]
 
+    def de_normalize(self, newData):
+        '''
+        De-Normalize an array based on the values used to normalize the data the DF was initiated withn
+        '''
+        normalized_data = []
+        for point in newData:
+            normalized_data.append (point * self.data_range + self.median)
+        return np.array(normalized_data)
+
+    def test_in_out_match(self):
+        '''
+        test method to make sure inputs and outputs are synced up
+        '''
+        _in = self.get_input_windows()
+        _out = self.get_output()
+        for i in range(self.data_len - self.seq_len-1):
+            print("Out: "+str(_out[i])+"; In: "+str(_in[i+1][self.seq_len-1])+"; Match: "+str(_out[i]==_in[i+1][self.seq_len-1]))
+
+
+
 
 def plot_results(predicted_data, true_data):
     '''
@@ -77,44 +106,50 @@ def plot_results(predicted_data, true_data):
     '''
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
-    ax.plot(true_data, label='True Data')
     plt.plot(predicted_data, label='Prediction')
+    ax.plot(true_data, label='True Data')
+    
     plt.legend()
     plt.show()
 
 
 def load_model(self, filepath):
-	print('[Model] Loading model from file %s' % filepath)
 	self.model = load_model(filepath)
 
 
-def predict(input):
+def predict(input, modelType="mainModel.h5"):
     '''
     Predict the stock
     '''
     # Load model that has performed the best thus far
     model = stockModel.stock_LSTM()
-    model.load_model("saved_models\\25step-4epoch-16batch.h5")
+    model.load_model("saved_models\\"+modelType)
     prediction = model.predict_point_by_point(input)
     return prediction
 
 
 def compileData(stockCollector, seq_len):
+    '''
+    Get all of the data needed to make a prediction compiled into a 3D numpy array just like the neural net will need it
+    Had to use generators in order to get one window from each stock at a time
+    '''
     compiled = []
     window = []
+    # Get generator from stock being predicted
     collected = stockCollector.collect()
     df = DataFormatter(collected, seq_len)
     mainDataGen = df.get_input_generator()
+    # Get generators for competitors
     compGens = []
     for competitor in stockCollector.competitorData: 
         df = DataFormatter(competitor, seq_len)
-        print(len(list(df.get_input_generator())))
         compGens.append(df.get_input_generator())
     indicatorGens = []
+    # Get generators for indicators
     for indicator in stockCollector.indicatorData: 
         df = DataFormatter(indicator, seq_len)
-        print(len(list(df.get_input_generator())))
         indicatorGens.append(df.get_input_generator())
+    #Get the window for the current timestep from each generator and make into a 2D array
     for i in range(len(collected)-seq_len):
         window = []
         window.append(next(mainDataGen))
@@ -122,29 +157,35 @@ def compileData(stockCollector, seq_len):
             window.append(next(ind))
         for comp in compGens:
             window.append(next(comp))
+        # Which is then added to a 3D array, which is the returned result
         compiled.append(np.transpose(np.asarray(window)))
     return np.asarray(compiled)
 
-
 def main():
-    start = DC.convert_to_unix(2019,1,1)
-    end = DC.convert_to_unix(2019,1,31)
+    start = DC.convert_to_unix(2019,9,29)
+    end = DC.convert_to_unix(2019,10,12)
     DC.DataCollector.setup()
     # Put your test code here
 
-    # Code for prediction of 5 random stocks from each industry
-    '''
-    for industry in DC.DataCollector.INDUSTRIES:
-        for i in range(5):
-            index = random.randint(0,len(DC.DataCollector.industryStocks[industry])-1)
-            stock = DC.DataCollector.industryStocks[industry][index]
-            mainStock = DC.DataCollector(stock, start, end, '1h', 'close')
-            input = compileData(mainStock, 24)
-            output = DataFormatter(mainStock.mainData, 24).get_output_windows()
-            predictions = predict(input)
-            plot_results(predictions,output)
-            print(stockModel.performance(predictions,output))
-    '''
+    for stock in ('AAPL','INTC','MSFT'):
+        mainStock = DC.DataCollector(stock, start, end, '1h', 'close')
+        df = DataFormatter(mainStock.mainData, 24)
+        df.test_in_out_match()
+
+        #input = compileData(mainStock, 24)
+        #_out = df.get_output()
+        #_pred = predict(input)
+        #predictions = df.de_normalize(_pred)
+        #output = df.de_normalize(_out)
+        #outSeries = []
+        #predSeries = []
+        #for i in range(24):
+        #    predSeries.append(np.nan)
+        #outSeries = mainStock.mainData
+        #predSeries = np.append(predSeries, predictions)
+        #plot_results(predSeries,outSeries)
+
+        #print(stock+"- "+str(stockModel.performance(_pred,_out)))
     
 if __name__ == '__main__':
     main()
