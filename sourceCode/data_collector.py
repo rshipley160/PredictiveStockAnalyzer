@@ -5,8 +5,6 @@ import pandas as pd
 import requests
 import arrow
 import os
-import datetime
-import time
 import numpy as np
 import threading
 
@@ -14,6 +12,8 @@ import threading
 from lxml import html  
 import json
 from collections import OrderedDict
+from datetime import time, date, datetime, timedelta
+import time as t
 
 # Market cap scrape imports
 import urllib.request
@@ -29,7 +29,7 @@ import pickle
 import math
 import sys
 
-printDebug = False
+printDebug = True
 
 def debug(string):
     '''
@@ -43,14 +43,14 @@ def convert_to_unix(year, month, day, hour=0, minute=0):
     '''
     Return an integer representing the unix timestamp equivalent of the specified date & time
     '''
-    return int(time.mktime(time.strptime('{}-{}-{} {}:{}:0'.format(year, month, day, hour, minute), '%Y-%m-%d %H:%M:%S')))
+    return int(t.mktime(t.strptime('{}-{}-{} {}:{}:0'.format(year, month, day, hour, minute), '%Y-%m-%d %H:%M:%S')))
 
 
 def convert_from_unix(unixCode):
     '''
     Return a formatted string displaying the date/time represented by the given unix timestamp
     '''
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(unixCode))
+    return t.strftime("%Y-%m-%d %H:%M:%S", t.localtime(unixCode))
 
 
 def patch_data(data):
@@ -61,6 +61,7 @@ def patch_data(data):
     Returns the patched array of data
     '''
     # Determine if this function can be used on the data
+    if len(data) < 3: return data 
     percent_nan = np.count_nonzero(np.isnan(data)) / len(data)
     if percent_nan > 0.4: raise ValueError("This data contains too many NaN values to patch.")
     if percent_nan == 0: return data
@@ -128,7 +129,10 @@ class DataCollector:
 
     # A constant list of all the financial sectors Yahoo divides stocks into
     INDUSTRIES = ['basic_materials','communication_services','consumer_cyclical','consumer_defensive','energy','financial_services','healthcare','industrials','real_estate','technology','utilities']
-    
+
+    # Constant dictionary to convert string intervals into timedelta objects
+    INTERVALS = {'1m':timedelta(minutes=1),'2m':timedelta(minutes=2),'5m':timedelta(minutes=5),'15m':timedelta(minutes=15),'30m':timedelta(minutes=30),'1h':timedelta(hours=1),'1d':timedelta(days=1),'1wk':timedelta(days=7),'1mo':timedelta(days=30)}
+
     # Boolean that indicates whether the static initialization has been completed
     initialized = False
 
@@ -294,10 +298,50 @@ class DataCollector:
                 marketCap = span.text.strip()
         debug("Market cap retrieved for "+ticker)
         return marketCap
+        
+    @staticmethod
+    def collectStock(stock, dateTimeIndex, interval, metric, patch=True):
+        '''
+        Use Yahoo API to get stock data
+        Metrics include close, open, high, low
+        Returns a 1D array containing data for the selected stock and metric
+        '''
+        debug("collecting data for "+stock+"...")
+        start = int(datetime.fromisoformat(dateTimeIndex[0]).timestamp())
+        end = int((datetime.fromisoformat(dateTimeIndex[-1])+DataCollector.INTERVALS[interval]).timestamp())
+        # Get data in .json format
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(stock,start,end,interval)
+        res = requests.get(url)
+        # Convert .json into nested dictionary format
+        data = res.json()
+        # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
+        chart = data['chart']
+        result = chart['result']
+        if result == None: raise ValueError
+        body = result[0]
+        try:
+            #dt = list(map(lambda x: arrow.get(x).to('EDST').datetime.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S"), body['timestamp']))
+            dt = list(map(lambda x: str(datetime.fromtimestamp(x)), body['timestamp']))
+            df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
+        except: raise ValueError("unable to retrieve stock values")
+        # index the info by the time frame
+        raw = []
+        for index in dateTimeIndex:
+            try: 
+                raw.append(df.loc[index][metric])
+            except:
+               raw.append(np.nan)
+        if patch:
+            try: 
+                patched = patch_data(np.asarray(raw))
+            except: patched = np.asarray(raw)
+        else: patched = np.asarray(raw)
+        debug("collection completed")
+        return patched
 
-
-    '''     Instance Methods        '''
-    def __init__(self, ticker, unixStart, unixEnd, interval, metric, __full_setup = True):
+    '''     Constructors        '''
+    @classmethod
+    def fromDate(cls, ticker, unixStart, unixEnd, interval, metric, __full_setup = True):
         '''
         Set up the DataCollecter using specified parameters
         ticker - ticker of the stock you wish to collect data from
@@ -313,29 +357,64 @@ class DataCollector:
         '''
         if not DataCollector.initialized and __full_setup: DataCollector.setup()
         debug("Intializing stock "+ticker+"...")
-        self.start = unixStart
-        self.end = unixEnd
+        obj = cls(ticker, interval, metric)
+        obj.start = unixStart
+        obj.end = unixEnd
+        obj.interval = interval
+        obj.metric = metric
+        obj.stock = ticker
+        obj.competitors = []
+        obj.industry = None
+        obj.capIndex = None
+        obj.competitorNames = []
+        obj.competitorData = []
+        obj.indicatorNames = []
+        obj.indicatorData  = []
+        obj.mainData = []
+        obj.dateTimeIndex = []
+        if __full_setup: 
+            obj.mainData = obj.dateCollect()
+            obj.industry = obj.getIndustry()
+            obj.loadCompetitors()
+            obj.loadIndicators()
+            obj.capIndex = obj.getMarketCapIndex()
+            obj.setIndex()
+        debug("Intialization complete")
+        return obj
+
+
+    @classmethod
+    def fromEndpoint(cls, ticker, endPoint, numPoints, interval, metric, __full_setup=True):
+        if not DataCollector.initialized and __full_setup: DataCollector.setup()
+        debug("Intializing stock "+ticker+"...")
+        obj = cls(ticker, interval, metric)
+        obj.competitors = []
+        obj.industry = None
+        obj.capIndex = None
+        obj.competitorNames = []
+        obj.competitorData = []
+        obj.indicatorNames = []
+        obj.indicatorData  = []
+        obj.mainData = []
+        obj.dateTimeIndex = []
+        if __full_setup: 
+            obj.collect(endPoint, numPoints)
+            obj.industry = obj.getIndustry()
+            obj.loadCompetitors()
+            obj.loadIndicators()
+            obj.capIndex = obj.getMarketCapIndex()
+        debug("Intialization complete")
+        return obj
+
+    
+    def __init__(self, ticker, interval, metric):
+        debug("Intializing stock "+ticker+"...")
         self.interval = interval
         self.metric = metric
         self.stock = ticker
-        self.competitors = []
-        self.industry = None
-        self.capIndex = None
-        self.competitorNames = []
-        self.competitorData = []
-        self.indicatorNames = []
-        self.indicatorData  = []
         self.mainData = []
-        self.dateTimeIndex = []
-        if __full_setup: 
-            self.mainData = self.collect()
-            self.industry = self.getIndustry()
-            self.loadCompetitors()
-            self.loadIndicators()
-            self.capIndex = self.getMarketCapIndex
-        debug("Intialization complete")
 
-
+    '''         Instance Methods            '''
     def getIndustry(self):
         '''
         Returns the industry this stock belongs to
@@ -349,7 +428,102 @@ class DataCollector:
                     return industry 
         
 
-    def collect(self, patch=True, dateTimeIndex = None):
+    def getPoint(self, timestamp, _interval='1m'):
+        '''
+        Return the data point for the timestamp and interval given
+        Interval is needed because requests have to contain two separate timestamps to return a single value
+        '''
+        # Get data in .json format
+        if DataCollector.INTERVALS[_interval] >= timedelta(days=1):
+            nextDate = date.fromtimestamp(timestamp) + DataCollector.INTERVALS[_interval]
+            nextDateTime = int(datetime(nextDate.year, nextDate.month, nextDate.day, 0, 0, 0, 0).timestamp())
+        else:
+            nextDateTime = int((datetime.fromtimestamp(timestamp) + DataCollector.INTERVALS[_interval]).timestamp())
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,timestamp,nextDateTime,_interval)
+        res = requests.get(url)
+        # Convert .json into nested dictionary format
+        data = res.json()
+        # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
+        try:
+            point = data['chart']['result'][0]['indicators']['quote'][0][self.metric][0]
+        except: 
+            point = np.nan
+        return point 
+
+
+    def getHours(self):
+        '''
+        Returns the start and end of regular trading time for this stock
+        '''
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().timestamp()),int((datetime.now()+timedelta(days=1)).timestamp()),'1d')
+        res = requests.get(url)
+        # Convert .json into nested dictionary format
+        data = res.json()
+        # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
+        chart = data['chart']
+        result = chart['result']
+        if result == None: raise ValueError
+        start = datetime.fromtimestamp(int(result[0]['meta']["currentTradingPeriod"]['regular']['start'])).time()
+        end = datetime.fromtimestamp(int(result[0]['meta']["currentTradingPeriod"]['regular']['end'])).time()
+        return start, end
+
+
+    def collect(self, endPoint, numPoints, _interval=None):
+        '''
+        Sets the dateTimeIndex of this DataCollector to include a number of datapoints which ends at endPoint
+        endPoint  - UNIX timestamp object representing the endpoint of the data to collect
+        numPoints - the number of points needed
+        '''
+        currentPoint = datetime.fromtimestamp(endPoint)
+        debug("collecting "+str(numPoints)+" points for "+self.stock+" ending at "+str(currentPoint))
+        startTime, endTime = self.getHours()
+        if _interval == None: _interval = self.interval
+        count = 0
+        index = []
+        points = []
+        currentPoint = datetime.fromtimestamp(endPoint).date()
+        end = datetime.fromtimestamp(endPoint).time()
+        attempts = 0
+        while (count < numPoints):
+            # Get start and end of trading day
+            startStamp = int(datetime.combine(currentPoint, startTime).timestamp())
+            endStamp = int(datetime.combine(currentPoint, end).timestamp())
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,startStamp,endStamp,self.interval)
+            print(url)
+            res = requests.get(url)
+            # Convert .json into nested dictionary format
+            data = res.json()
+            try:
+                body =  data['chart']['result'][0]
+                values = ['chart']['result'][0]['indicators']['quote'][0]
+                dt = list(map(lambda x: str(datetime.fromtimestamp(x)), body['timestamp']))
+                df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
+                dt.reverse()
+                attempts = 0
+                for ind in dt:
+                    value = df.loc[ind][self.metric]
+                    print(value,end=" ")
+                    if value == np.nan: continue
+                    index.append(ind)
+                    points.append(value)
+                    count += 1
+                print()
+            except: 
+                attempts += 1
+                pass
+            currentPoint -= timedelta(days=1)
+            end = endTime
+            if attempts >= 5: raise ValueError 
+           
+
+        index.reverse()
+        points.reverse()
+        self.dateTimeIndex = index
+        print(points)
+        self.mainData = patch_data(points)
+
+
+    def dateCollect(self, patch=True, dateTimeIndex = None):
         '''
         Use Yahoo API to get stock data
         Metrics include close, open, high, low
@@ -367,8 +541,10 @@ class DataCollector:
         result = chart['result']
         if result == None: raise ValueError
         body = result[0]
-        dt = list(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S"), body['timestamp']))
-        df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
+        try:
+            dt = list(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S"), body['timestamp']))
+            df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
+        except: raise ValueError("unable to retrieve stock values")
         if dateTimeIndex == None:
             self.dateTimeIndex = dt
 
@@ -394,7 +570,7 @@ class DataCollector:
             else: patched = np.asarray(raw)
             debug("collection completed")
             return patched
-                 
+
 
     def getMarketCapIndex(self):
         '''
@@ -417,10 +593,9 @@ class DataCollector:
             # Go down the sorted list of stocks 
             # and pick the first one that has good data available
             for stock in DataCollector.sortedStocks[industry]:
-                collector = DataCollector(stock[0], self.start, self.end, self.interval, self.metric, False)
                 try:
                     # Run these two lines to make sure data can be collected
-                    raw = collector.collect(dateTimeIndex = self.dateTimeIndex)
+                    raw = DataCollector.collectStock(stock[0],self.dateTimeIndex, self.interval, self.metric)
                     # and patched if needed
                     patched = patch_data(raw)
                     debug(stock[0]+" has the highest market cap for "+industry)
@@ -460,14 +635,13 @@ class DataCollector:
                 stock = DataCollector.sortedStocks[self.getIndustry()][seek_index][0]
                 debug("Attempting to collect "+stock+"...")
 
-                competitor = DataCollector(stock, self.start, self.end, self.interval, self.metric, False)
-                raw = competitor.collect(dateTimeIndex = self.dateTimeIndex)
+                raw = DataCollector.collectStock(stock, self.dateTimeIndex, self.interval, self.metric)
                 patched = patch_data(raw)
                 self.competitorNames.append(stock[0])
                 self.competitorData.append(patched)
                 compsLeft -= 1
                 debug("Collection succeeded")
-            except: debug("Collection failed")
+            except ValueError: debug("Collection failed")
             if seek_index >= len(DataCollector.sortedStocks[self.getIndustry()]): raise ValueError
 
 
@@ -517,17 +691,8 @@ def parse(sector):
     '''
 
 def main():
-
-    start = convert_to_unix(2009,1,1)
-    end = convert_to_unix(2019,1,1)
+    print(convert_from_unix(1570215540), convert_from_unix(1570451460))
    
-    DataCollector.setup()    
-    stock = DataCollector('ORCL',start,end, '1d', 'close')
-    # print(stock.dateTimeIndex)
-    #for i in range(4):
-    #    print(len(stock.competitorData[i]), end="\t") 
-    #for i in range(11):
-    #    print(len(stock.indicatorData[i]), end="\t")
 
 
 
