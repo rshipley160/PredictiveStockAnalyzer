@@ -384,6 +384,48 @@ class DataCollector:
 
 
     @classmethod
+    def fromDateArray(cls, ticker, startArray, endArray, interval, metric, __full_setup = True):
+        '''
+        Set up the DataCollecter using specified parameters
+        ticker - ticker of the stock you wish to collect data from
+        startArray - array in the form [year, month, day, hour, minute] that specifies start date/time
+        endArray - array in the form [year, month, day, hour, minute] that specifies end date/time
+        interval - the time interval used, or the granularity of the data
+                Allowed intervals are 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk
+        metric - the type of stock metric you'd like to use - open, high, low, close
+        __full_setup - whether or not this constructor is a full DataCollector
+                Determines if it can attempt setup of the static class
+                And if the full attributes of the stock will be loaded on initialization
+                Some load methods use shallow DataCollectors, this is to avoid unwanted recursion
+        '''
+        if not DataCollector.initialized and __full_setup: DataCollector.setup()
+        debug("Intializing stock "+ticker+"...")
+        obj = cls(ticker, interval, metric)
+        obj.start = convert_to_unix(startArray[0], startArray[1], startArray[2], startArray[3], startArray[4])
+        obj.end = convert_to_unix(endArray[0], endArray[1], endArray[2], endArray[3], endArray[4])
+        obj.interval = interval
+        obj.metric = metric
+        obj.stock = ticker
+        obj.competitors = []
+        obj.industry = None
+        obj.capIndex = None
+        obj.competitorNames = []
+        obj.competitorData = []
+        obj.indicatorNames = []
+        obj.indicatorData  = []
+        obj.mainData = []
+        obj.dateTimeIndex = []
+        if __full_setup: 
+            obj.mainData = obj.dateCollect()
+            obj.industry = obj.getIndustry()
+            obj.loadCompetitors()
+            obj.loadIndicators()
+            obj.capIndex = obj.getMarketCapIndex()
+            obj.setIndex()
+        debug("Intialization complete")
+        return obj
+
+    @classmethod
     def fromEndpoint(cls, ticker, endPoint, numPoints, interval, metric, __full_setup=True):
         if not DataCollector.initialized and __full_setup: DataCollector.setup()
         debug("Intializing stock "+ticker+"...")
@@ -489,31 +531,27 @@ class DataCollector:
             startStamp = int(datetime.combine(currentPoint, startTime).timestamp())
             endStamp = int(datetime.combine(currentPoint, end).timestamp())
             url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,startStamp,endStamp,self.interval)
-            print(url)
+            print(datetime.combine(currentPoint, startTime),datetime.combine(currentPoint, end),url)
             res = requests.get(url)
             # Convert .json into nested dictionary format
             data = res.json()
             try:
-                body =  data['chart']['result'][0]
-                values = ['chart']['result'][0]['indicators']['quote'][0]
+                chart = data['chart']
+                result = chart['result']
+                body = result[0]
                 dt = list(map(lambda x: str(datetime.fromtimestamp(x)), body['timestamp']))
                 df = pd.DataFrame(body['indicators']['quote'][0], index=dt)
                 dt.reverse()
                 attempts = 0
                 for ind in dt:
                     value = df.loc[ind][self.metric]
-                    print(value,end=" ")
                     if value == np.nan: continue
                     index.append(ind)
                     points.append(value)
                     count += 1
-                print()
-            except: 
-                attempts += 1
-                pass
+            except : pass
             currentPoint -= timedelta(days=1)
             end = endTime
-            if attempts >= 5: raise ValueError 
            
 
         index.reverse()
