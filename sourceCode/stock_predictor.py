@@ -165,16 +165,19 @@ def compileData(stockCollector, seq_len):
         compiled.append(np.transpose(np.asarray(window)))
     return np.asarray(compiled)
 
-def historical_prediction(stock, start, end, interval, metric):
+def historical_prediction(stock, startArray, endArray, interval, metric):
     '''
     stock       -   ticker of the stock you want to predict
-    start       -   UNIX-formatted timestamp for starting time/date of prediction
-    end         -   UNIX-formatted timestamp for ending time/date of prediction
+    startArray  -   start date / time array in the form [year, month, day, hour, minute]
+    endArray    -   start date / time array in the form [year, month, day, hour, minute]
     interval    -   Smallest interval of predicted points desired - '1m', '1h', or '1d'
     metric      -   Measure of stock value - either 'open', 'close', 'high', or 'low'
     Note: start and end are inclusive, i.e. they will not "round" to the next date / time
     Note: interval is self-regulating and will throw errors if too small
     '''
+	start = convert_to_unix(startArray[0], startArray[1], startArray[2], startArray[3], startArray[4])
+	end = convert_to_unix(endArray[0], endArray[1], endArray[2], endArray[3], endArray[4])
+	
     dataEnd = datetime.fromtimestamp(end)
 
     # NeededPoints = time elapsed / interval + 24 (24 points before first prediction) - 1 (don't need to collect end prediction point)
@@ -188,8 +191,7 @@ def historical_prediction(stock, start, end, interval, metric):
     model = stockModel.stock_LSTM()
     model.load_model("saved_models\\mainModel.h5")
     prediction = predict(input)
-    plot_results(df.de_normalize(prediction),output)
-    print(stockModel.performance(df.de_normalize(prediction),output))
+	return df.de_normalize(prediction)
     
 def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_output=None):
     '''
