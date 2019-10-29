@@ -13,6 +13,8 @@ import sourceCode.stock_predictor as Predictor
 from sourceCode.data_collector import convert_to_unix, DataCollector as DC
 import random
 
+environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+
 debugging = False
 
 def debug(string):
@@ -39,7 +41,7 @@ class stock_LSTM:
 
         return self.model
 
-    def train(self, x, y, epochs=1, batch_size=32, save_dir="saved_models", save_name=None, save=True):
+    def train(self, x, y, epochs=1, batch_size=32, save_dir=os.path.join(environment,"saved_models"), save_name=None, save=True):
         print('[Model] Training Started')
         print('[Model] %s epochs, %s batch size' % (epochs, batch_size))
 		
@@ -101,7 +103,7 @@ if __name__ == "__main__":
     #Model prediction
     start = convert_to_unix(2009,10,10)
     end = convert_to_unix(2019,10,12)
-    model.load_model('saved_models\\25step-16epoch-16batch-hourly-1each.h5')
+    model.load_model(os.path.join(environment,'data\\mainModel.h5'))
     for industry in DC.INDUSTRIES:
         for stock in range(len(DC.industryStocks[industry])):
             try:

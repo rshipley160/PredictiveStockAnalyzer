@@ -16,7 +16,7 @@ import pandas as pd
 import random
 from threading import Thread
 
-
+environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
 
 class DataFormatter():
     """     A class for loading and transforming 1D arrays of stock data into normalized windows    """
@@ -115,13 +115,13 @@ def load_model(self, filepath):
 	self.model = load_model(filepath)
 
 
-def predict(input, modelType="mainModel.h5"):
+def predict(input):
     '''
     Predict the stock
     '''
     # Load model that has performed the best thus far
     model = stockModel.stock_LSTM()
-    model.load_model("saved_models\\"+modelType)
+    model.load_model(os.path.join(environment,"data\\mainModel.h5"))
     prediction = model.predict_point_by_point(input)
     return prediction
 
@@ -168,30 +168,30 @@ def compileData(stockCollector, seq_len):
 def historical_prediction(stock, startArray, endArray, interval, metric):
     '''
     stock       -   ticker of the stock you want to predict
-    startArray  -   start date / time array in the form [year, month, day, hour, minute]
-    endArray    -   start date / time array in the form [year, month, day, hour, minute]
+    startArray  -   start datetime array of the form [year, month, day, hour, minute]
+    endArray    -   end datetime array of the form [year, month, day, hour, minute]
     interval    -   Smallest interval of predicted points desired - '1m', '1h', or '1d'
     metric      -   Measure of stock value - either 'open', 'close', 'high', or 'low'
     Note: start and end are inclusive, i.e. they will not "round" to the next date / time
     Note: interval is self-regulating and will throw errors if too small
     '''
-	start = convert_to_unix(startArray[0], startArray[1], startArray[2], startArray[3], startArray[4])
-	end = convert_to_unix(endArray[0], endArray[1], endArray[2], endArray[3], endArray[4])
-	
+    start = DC.convert_to_unix(startArray[0],startArray[1],startArray[2],startArray[3],startArray[4])
+    end = DC.convert_to_unix(endArray[0],endArray[1],endArray[2],endArray[3],endArray[4])
+
     dataEnd = datetime.fromtimestamp(end)
 
     # NeededPoints = time elapsed / interval + 24 (24 points before first prediction) - 1 (don't need to collect end prediction point)
     neededPoints = int((datetime.fromtimestamp(end) - datetime.fromtimestamp(start))/DC.DataCollector.INTERVALS[interval] + 24 - 1)
+    print(neededPoints,"points needed for",stock,"prediction from",datetime.fromtimestamp(start),"to",dataEnd)
     try:
         testCollector = DC.DataCollector.fromEndpoint(stock, end, neededPoints, interval, metric)
         df = DataFormatter(testCollector.mainData, 24)
         input = compileData(testCollector, 24)
-        output = df.get_output(normalize=False)
     except: print("stock",stock,"does not have enough associated data available to make a prediction for the time selected"); return 
     model = stockModel.stock_LSTM()
-    model.load_model("saved_models\\mainModel.h5")
+    model.load_model("data\\mainModel.h5")
     prediction = predict(input)
-	return df.de_normalize(prediction)
+    return df.de_normalize(prediction)
     
 def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_output=None):
     '''
@@ -270,9 +270,7 @@ def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_outp
                 shortStrip.append(shortData[j][len(shortData[j])-(k*i)])
             shortWindow.append(shortStrip)
         shortInputWindows.append(shortWindow)
-
-    print(shortInputWindows)
-    print(np.shape(shortInputWindows))
+ 
 
     for i in range(1,longPredictions+1):
         longWindow = []
@@ -283,8 +281,6 @@ def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_outp
             longWindow.append(longStrip)
         longInputWindows.append(longWindow)
 
-    print(longInputWindows)
-    print(np.shape(longInputWindows))
 
 
 
@@ -309,7 +305,7 @@ def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_outp
 
 
 def main():
-
+    '''
     pastStart = DC.convert_to_unix(2019,10,7,12,30)
     pastEnd = DC.convert_to_unix(2019,10,7,13,0)
 
@@ -321,6 +317,15 @@ def main():
 
 
     future_prediction('AAPL',end,'1m','close', pastStart, output)
+    '''
+    start = [2019,10,7,9,30]
+    end = [2019,10,7,15,30]
+
+    output = DC.DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect()
+    prediction = historical_prediction('AAPL',start,end,'1m','close')
+    plot_results(prediction, output)
+    print(stockModel.performance(prediction, output))
+
     
 if __name__ == '__main__':
     main()

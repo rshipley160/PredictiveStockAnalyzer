@@ -189,9 +189,12 @@ class DataCollector:
         '''
         debug("Loading market cap dict for "+industry+"...")
 
-        if path.exists("data\\marketCapDict_"+industry+".dat"):
+        script_path = os.path.realpath(__file__)
+        environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+
+        if path.exists(os.path.join(environment,("data\\marketCapDict_"+industry+".dat"))):
             debug("File found. Loading dictionary")
-            obj_file = open("data\\marketCapDict_"+industry+".dat",'rb')
+            obj_file = open(os.path.join(environment,("data\\marketCapDict_"+industry+".dat")),'rb')
             DataCollector.marketCapDict[industry] = pickle.load(obj_file)
             obj_file.close()
         else: 
@@ -222,8 +225,8 @@ class DataCollector:
                 threads[i].join()
 
             #Save to a binary file that the program knows how to open for reuse
-            if not path.exists("data"): os.makedirs("data")
-            obj_file = open("data\\marketCapDict_"+industry+".dat",'wb')
+            if not path.exists(os.path.join(environment,"data")): os.makedirs("data")
+            obj_file = open(os.path.join(environment,("data\\marketCapDict_"+industry+".dat")),'wb')
             pickle.dump(DataCollector.marketCapDict[industry], obj_file)
             obj_file.close()
 
@@ -549,6 +552,8 @@ class DataCollector:
                     index.append(ind)
                     points.append(value)
                     count += 1
+                    print(value,count)
+                    if count >= numPoints: break
             except : pass
             currentPoint -= timedelta(days=1)
             end = endTime
@@ -729,7 +734,12 @@ def parse(sector):
     '''
 
 def main():
-    print(convert_from_unix(1570215540), convert_from_unix(1570451460))
+    DataCollector.setup()
+
+    start = [2019, 10, 8, 9, 30]
+    end = [2019, 10, 8, 9, 35]
+    print(DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect())
+    
    
 
 
