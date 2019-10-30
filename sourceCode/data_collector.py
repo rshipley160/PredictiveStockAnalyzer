@@ -155,7 +155,10 @@ class DataCollector:
         Load industryStocks dictionary with stocks labeled by industry
         '''
         debug("Loading industryStocks dictionary...")
-        industryFile = open('data\Industries.txt','r')
+
+        environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+
+        industryFile = open(os.path.join(environment,'data\Industries.txt'),'r')
         industries = {}
         for industryLine in industryFile.readlines():
             industry = industryLine.rstrip().split(',')
