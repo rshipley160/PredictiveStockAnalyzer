@@ -8,9 +8,8 @@ import json
 from datetime import time, date, datetime, timedelta
 import math
 import matplotlib.pyplot as plt
-import sourceCode.stock_LSTM as stockModel
-import sourceCode.data_collector as DC
-import math
+import stock_components.sourceCode.stock_LSTM as stockModel
+import stock_components.sourceCode.data_collector as DC
 import numpy as np
 import pandas as pd
 import random
@@ -186,11 +185,9 @@ def historical_prediction(stock, startArray, endArray, interval, metric):
     try:
         testCollector = DC.DataCollector.fromEndpoint(stock, end, neededPoints, interval, metric)
         df = DataFormatter(testCollector.mainData, 24)
-        input = compileData(testCollector, 24)
-    except: print("stock",stock,"does not have enough associated data available to make a prediction for the time selected"); return 
-    model = stockModel.stock_LSTM()
-    model.load_model("data\\mainModel.h5")
-    prediction = predict(input)
+        inputx = compileData(testCollector, 24)
+    except: return f'stock {stock} does not have enough associated data' 
+    prediction = predict(inputx)
     return df.de_normalize(prediction)
     
 def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_output=None):
@@ -296,36 +293,37 @@ def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_outp
     plot_results(shortPredictionPoints,[] if __dev_start == None else __dev_output)
 
 
-
-
-
-
-    
-
+def get_actual_data(stock_ticker, start, end, interval, metric):
+    output = DC.DataCollector.fromDateArray(stock_ticker,start,end,interval,metric,False).dateCollect()
+    return output
 
 
 def main():
     '''
     pastStart = DC.convert_to_unix(2019,10,7,12,30)
     pastEnd = DC.convert_to_unix(2019,10,7,13,0)
-
     end = DC.convert_to_unix(2019,10,28,12,30)
-
     DC.DataCollector.setup()
-
     output = DataFormatter(DC.DataCollector.fromDate('AAPL',pastStart, pastEnd, '1m', 'close', False).dateCollect(),24).data
-
-
     future_prediction('AAPL',end,'1m','close', pastStart, output)
     '''
-    start = [2019,10,7,9,30]
-    end = [2019,10,7,15,30]
 
-    output = DC.DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect()
+    
+    start = [2019,11,13,21,30]
+    end = [2019,11,14,21,30]
+
+    output = DC.DataCollector.fromDateArray('FOFODJFSLFJL',start,end,'1m','close',False).dateCollect()
     prediction = historical_prediction('AAPL',start,end,'1m','close')
     plot_results(prediction, output)
+    print('Output ' + str(len(output)))
+    print('Prediction ' + str(len(prediction)))
     print(stockModel.performance(prediction, output))
+    
 
     
 if __name__ == '__main__':
     main()
+
+
+
+

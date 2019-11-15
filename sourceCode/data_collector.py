@@ -138,16 +138,24 @@ class DataCollector:
 
     '''     Static methods      '''
     @staticmethod
-    def setup():
-        if DataCollector.initialized: return
-        debug("starting setup")
-        DataCollector.loadIndustryStocks()
+    def setup(force_reload=False):
+        try:
+            if DataCollector.initialized: return
+            debug("starting setup")
+            DataCollector.loadIndustryStocks()
 
-        DataCollector.loadMarketCap()
+            if (force_reload == False):
+                DataCollector.loadMarketCap()
+            else:
+                DataCollector.reloadMarketCap()
 
-        DataCollector.initialized = True
-        debug("setup complete")
+            DataCollector.initialized = True
+            debug("setup complete")
 
+            return True
+
+        except:
+            return False
 
     @staticmethod
     def loadIndustryStocks():
@@ -155,7 +163,7 @@ class DataCollector:
         Load industryStocks dictionary with stocks labeled by industry
         '''
         debug("Loading industryStocks dictionary...")
-         environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+        environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
 
         industryFile = open(os.path.join(environment,'data\Industries.txt'),'r')
         industries = {}
@@ -179,9 +187,22 @@ class DataCollector:
                 DataCollector.sortedStocks[industry] = sorted(DataCollector.marketCapDict[industry].items(), key=lambda x:x[1], reverse=True)
         debug("Market cap dictionaries loaded")
 
+    @staticmethod
+    def reloadMarketCap():
+        '''
+        load the sorted and unsorted market cap dictionaries
+        '''
+        debug("Reloading market cap dictionaries...")
+        if len(DataCollector.industryStocks.keys()) == 0: DataCollector.loadIndustryStocks()
+        for industry in DataCollector.industryStocks.keys():
+            DataCollector.__loadMarketCapDict(industry, True)
+                # sortedStocks is a list of tuples containing key value pairs that are ordered by market cap
+            DataCollector.sortedStocks[industry] = sorted(DataCollector.marketCapDict[industry].items(), key=lambda x:x[1], reverse=True)
+        debug("Market cap dictionaries loaded")
+
 
     @staticmethod
-    def __loadMarketCapDict(industry):
+    def __loadMarketCapDict(industry, force_reload=False):
         '''
         Helper method to getHighestMarketCap
         Splits sector loading among multiple threads
@@ -194,7 +215,7 @@ class DataCollector:
         script_path = os.path.realpath(__file__)
         environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
 
-        if path.exists(os.path.join(environment,("data\\marketCapDict_"+industry+".dat"))):
+        if path.exists(os.path.join(environment,("data\\marketCapDict_"+industry+".dat"))) and not force_reload:
             debug("File found. Loading dictionary")
             obj_file = open(os.path.join(environment,("data\\marketCapDict_"+industry+".dat")),'rb')
             DataCollector.marketCapDict[industry] = pickle.load(obj_file)
@@ -502,7 +523,7 @@ class DataCollector:
         '''
         Returns the start and end of regular trading time for this stock
         '''
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().timestamp()),int((datetime.now()+timedelta(days=1)).timestamp()),'1d')
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().replace(hour=12).timestamp()),int((datetime.now().replace(hour=14)+timedelta(days=1)).timestamp()),'1d')
         res = requests.get(url)
         # Convert .json into nested dictionary format
         data = res.json()
@@ -578,13 +599,14 @@ class DataCollector:
         debug("collecting data for "+self.stock+"...")
         # Get data in .json format
         url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,self.start,self.end,self.interval)
+        #print(url)
         res = requests.get(url)
         # Convert .json into nested dictionary format
         data = res.json()
         # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
         chart = data['chart']
         result = chart['result']
-        if result == None: raise ValueError
+        if result == None: raise ValueError("TEST TEST TEST")
         body = result[0]
         try:
             dt = list(map(lambda x: arrow.get(x).to('EST').datetime.replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S"), body['timestamp']))
@@ -736,13 +758,8 @@ def parse(sector):
     '''
 
 def main():
-    DataCollector.setup()
-
-    start = [2019, 10, 8, 9, 30]
-    end = [2019, 10, 8, 9, 35]
-    print(DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect())
-    
-   
+    if (DataCollector.setup(True)):
+        print("hllo world")
 
 
 
