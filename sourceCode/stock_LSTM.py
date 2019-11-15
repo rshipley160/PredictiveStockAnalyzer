@@ -4,13 +4,11 @@ import numpy as np
 import datetime as dt
 import matplotlib.pyplot as plt
 from numpy import newaxis
-from LSTM_base.core.utils import Timer
-from LSTM_base.core.data_processor import DataLoader
 from keras.layers import Dense, Activation, Dropout, LSTM
 from keras.models import Sequential, load_model as load
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-import sourceCode.stock_predictor as Predictor
-from sourceCode.data_collector import convert_to_unix, DataCollector as DC
+import stock_predictor as Predictor
+from data_collector import convert_to_unix, DataCollector as DC
 import random
 
 environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)

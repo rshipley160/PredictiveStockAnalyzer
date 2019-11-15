@@ -155,7 +155,7 @@ class DataCollector:
         Load industryStocks dictionary with stocks labeled by industry
         '''
         debug("Loading industryStocks dictionary...")
-         environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+        environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
 
         industryFile = open(os.path.join(environment,'data\Industries.txt'),'r')
         industries = {}
@@ -502,7 +502,7 @@ class DataCollector:
         '''
         Returns the start and end of regular trading time for this stock
         '''
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().timestamp()),int((datetime.now()+timedelta(days=1)).timestamp()),'1d')
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().replace(hour=12).timestamp()),int((datetime.now().replace(hour=14)+timedelta(days=1)).timestamp()),'1d')
         res = requests.get(url)
         # Convert .json into nested dictionary format
         data = res.json()
@@ -736,10 +736,10 @@ def parse(sector):
     '''
 
 def main():
-    DataCollector.setup()
+    #DataCollector.setup()
 
-    start = [2019, 10, 8, 9, 30]
-    end = [2019, 10, 8, 9, 35]
+    start = [2019, 11, 7, 9, 30]
+    end = [2019, 11, 7, 9, 30]
     print(DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect())
     
    

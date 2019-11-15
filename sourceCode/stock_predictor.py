@@ -8,9 +8,8 @@ import json
 from datetime import time, date, datetime, timedelta
 import math
 import matplotlib.pyplot as plt
-import sourceCode.stock_LSTM as stockModel
-import sourceCode.data_collector as DC
-import math
+import stock_LSTM as stockModel
+import data_collector as DC
 import numpy as np
 import pandas as pd
 import random
@@ -186,11 +185,9 @@ def historical_prediction(stock, startArray, endArray, interval, metric):
     try:
         testCollector = DC.DataCollector.fromEndpoint(stock, end, neededPoints, interval, metric)
         df = DataFormatter(testCollector.mainData, 24)
-        input = compileData(testCollector, 24)
-    except: print("stock",stock,"does not have enough associated data available to make a prediction for the time selected"); return 
-    model = stockModel.stock_LSTM()
-    model.load_model("data\\mainModel.h5")
-    prediction = predict(input)
+        inputx = compileData(testCollector, 24)
+    except: return f'stock {stock} does not have enough associated data' 
+    prediction = predict(inputx)
     return df.de_normalize(prediction)
     
 def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_output=None):
@@ -298,10 +295,11 @@ def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_outp
 
 
 
-
-
-    
-
+def get_actual_data(stock_ticker, interval, metric):
+    start = [2019,10,7,9,30]
+    end = [2019,10,7,11,30]
+    output = DC.DataCollector.fromDateArray('AAPL',start,end,interval,metric,False).dateCollect()
+    return output
 
 
 def main():
@@ -318,13 +316,18 @@ def main():
 
     future_prediction('AAPL',end,'1m','close', pastStart, output)
     '''
-    start = [2019,10,7,9,30]
-    end = [2019,10,7,15,30]
+
+    
+    start = [2019,11,7,9,30]
+    end = [2019,11,7,11,30]
 
     output = DC.DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect()
     prediction = historical_prediction('AAPL',start,end,'1m','close')
     plot_results(prediction, output)
+    print('Output ' + str(output))
+    print('Prediction ' + str(prediction))
     print(stockModel.performance(prediction, output))
+    
 
     
 if __name__ == '__main__':
