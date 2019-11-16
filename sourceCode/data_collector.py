@@ -29,7 +29,7 @@ import pickle
 import math
 import sys
 
-printDebug = True
+printDebug = False
 
 def debug(string):
     '''
@@ -759,7 +759,7 @@ def parse(sector):
 
 def main():
     if (DataCollector.setup(True)):
-        print("hllo world")
+        print("hello world")
 
 
 

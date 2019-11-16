@@ -7,8 +7,8 @@ from numpy import newaxis
 from keras.layers import Dense, Activation, Dropout, LSTM
 from keras.models import Sequential, load_model as load
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-import stock_components.sourceCode.stock_predictor as Predictor
-from stock_components.sourceCode.data_collector import convert_to_unix, DataCollector as DC
+import stock_predictor as Predictor
+from data_collector import convert_to_unix, DataCollector as DC
 import random
 
 environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)

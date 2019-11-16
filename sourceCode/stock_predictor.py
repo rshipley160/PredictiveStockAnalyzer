@@ -8,8 +8,8 @@ import json
 from datetime import time, date, datetime, timedelta
 import math
 import matplotlib.pyplot as plt
-import stock_components.sourceCode.stock_LSTM as stockModel
-import stock_components.sourceCode.data_collector as DC
+import stock_LSTM as stockModel
+import data_collector as DC
 import numpy as np
 import pandas as pd
 import random
@@ -174,14 +174,29 @@ def historical_prediction(stock, startArray, endArray, interval, metric):
     Note: start and end are inclusive, i.e. they will not "round" to the next date / time
     Note: interval is self-regulating and will throw errors if too small
     '''
-    start = DC.convert_to_unix(startArray[0],startArray[1],startArray[2],startArray[3],startArray[4])
-    end = DC.convert_to_unix(endArray[0],endArray[1],endArray[2],endArray[3],endArray[4])
-
+    startDT = datetime(startArray[0], startArray[1], startArray[2],startArray[3],startArray[4])
+    endDT = datetime(endArray[0], endArray[1], endArray[2],endArray[3],endArray[4])
+    start = startDT.timestamp()
+    end = endDT.timestamp()
+    numDays = math.ceil((endDT.date() - startDT.date())  / timedelta(days=1))+1
+    tradeStart, tradeEnd = DC.DataCollector(stock, interval, metric).getHours()
+    neededPoints = 0
+    for i in range(numDays):
+        dayStart = tradeStart
+        dayEnd = tradeEnd
+        if i==0 and startDT.time() > tradeEnd:
+            continue
+        if i==0 and startDT.time() > tradeStart and startDT.time() < tradeEnd:
+            dayStart = startDT.time()
+        if i == numDays-1 and endDT.time() < tradeEnd:
+            dayEnd = endDT.time()
+        neededPoints += math.ceil((timedelta(hours=dayEnd.hour, minutes=dayEnd.minute) - timedelta(hours=dayStart.hour, minutes=dayStart.minute)) / timedelta(minutes=1))
+    neededPoints += 24
     dataEnd = datetime.fromtimestamp(end)
 
     # NeededPoints = time elapsed / interval + 24 (24 points before first prediction) - 1 (don't need to collect end prediction point)
-    neededPoints = int((datetime.fromtimestamp(end) - datetime.fromtimestamp(start))/DC.DataCollector.INTERVALS[interval] + 24 - 1)
     print(neededPoints,"points needed for",stock,"prediction from",datetime.fromtimestamp(start),"to",dataEnd)
+   
     try:
         testCollector = DC.DataCollector.fromEndpoint(stock, end, neededPoints, interval, metric)
         df = DataFormatter(testCollector.mainData, 24)
@@ -309,10 +324,10 @@ def main():
     '''
 
     
-    start = [2019,11,13,21,30]
-    end = [2019,11,14,21,30]
+    start = [2019,11,11,9,30]
+    end = [2019,11,13,20,30]
 
-    output = DC.DataCollector.fromDateArray('FOFODJFSLFJL',start,end,'1m','close',False).dateCollect()
+    output = DC.DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect()
     prediction = historical_prediction('AAPL',start,end,'1m','close')
     plot_results(prediction, output)
     print('Output ' + str(len(output)))
