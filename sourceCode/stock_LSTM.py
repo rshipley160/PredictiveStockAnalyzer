@@ -7,9 +7,12 @@ from numpy import newaxis
 from keras.layers import Dense, Activation, Dropout, LSTM
 from keras.models import Sequential, load_model as load
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-import stock_predictor as Predictor
-from data_collector import convert_to_unix, DataCollector as DC
+from keras.backend import get_session
+import tensorflow as tf
+import stock_components.sourceCode.stock_predictor as Predictor
+from stock_components.sourceCode.data_collector import convert_to_unix, DataCollector as DC
 import random
+from threading import Thread
 
 environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
 
@@ -64,13 +67,17 @@ class stock_LSTM:
             debug('Model saved as %s' % save_fname)
 
     def load_model(self, filepath):
-	    debug('[Model] Loading model from file %s' % filepath)
-	    self.model = load(filepath)
+        debug('[Model] Loading model from file %s' % filepath)
+        self.model = load(filepath)
+        self.session = get_session()
+        self.model._make_predict_function()
+        self.graph = tf.compat.v1.get_default_graph()
+        self.graph.finalize()
         
     def predict_point_by_point(self, data):
         # Predict each timestep given the last sequence of true data, in effect only predicting 1 step ahead each time
         debug('[Model] Predicting Point-by-Point...')
-        predicted = self.model.predict(data)
+        predicted = self.model.predict_on_batch(data)
         predicted = np.reshape(predicted, (predicted.size,))
         return predicted
 
@@ -92,29 +99,36 @@ def performance(predicted_data, true_data):
     if len(distances) == 0: return 0
     return 1 - sum(distances) / len(distances)
 
+def thread_predict(int, pred, out):
+    start = convert_to_unix(2019,11,11,9,30)
+    end = convert_to_unix(2019,11,12,16,0)
+
+    stock = DC.industryStocks["technology"][int]
+    collector = DC.fromDate(stock, start, end, '1m', 'close')
+    input = Predictor.compileData(collector, 24)
+    output = Predictor.DataFormatter(collector.mainData, 24).get_output()
+    predictions = model.predict_point_by_point(input)
+    pred[int] = predictions
+    out[int] = output
+
 if __name__ == "__main__":
     
     debugging = True
     model = stock_LSTM()
     DC.setup()
-    
+    threads = []
     #Model prediction
-    start = convert_to_unix(2009,10,10)
-    end = convert_to_unix(2019,10,12)
+    
     model.load_model(os.path.join(environment,'data\\mainModel.h5'))
-    for industry in DC.INDUSTRIES:
-        for stock in range(len(DC.industryStocks[industry])):
-            try:
-                stock = DC.industryStocks[industry][stock]
-                collector = DC(stock, start, end, '1mo', 'close')
-            except:
-                continue
-            input = Predictor.compileData(collector, 24)
-            output = Predictor.DataFormatter(collector.mainData, 24).get_output_windows()
-            predictions = model.predict_point_by_point(input)
-            print(stock+": "+str(performance(predictions,output)))
-            plot_results(predictions, output)
-
+    predictions = [[], [], [], []]
+    outputs = [[], [], [], []]
+    for stock in range(4):
+        threads.append( Thread(target=thread_predict, args=(stock, predictions, outputs)))
+        threads[-1].start()
+            
+    for thread in range(4):
+        threads[thread].join()
+        plot_results(predictions[thread],outputs[thread])
     '''   
     # Model training 
     start = convert_to_unix(2019,3,31)
