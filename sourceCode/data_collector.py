@@ -29,7 +29,7 @@ import pickle
 import math
 import sys
 
-printDebug = False
+printDebug = True
 
 def debug(string):
     '''
@@ -404,7 +404,6 @@ class DataCollector:
             obj.loadCompetitors()
             obj.loadIndicators()
             obj.capIndex = obj.getMarketCapIndex()
-            obj.setIndex()
         debug("Intialization complete")
         return obj
 
@@ -447,7 +446,6 @@ class DataCollector:
             obj.loadCompetitors()
             obj.loadIndicators()
             obj.capIndex = obj.getMarketCapIndex()
-            obj.setIndex()
         debug("Intialization complete")
         return obj
 
@@ -523,17 +521,96 @@ class DataCollector:
         '''
         Returns the start and end of regular trading time for this stock
         '''
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(datetime.now().replace(hour=12).timestamp()),int((datetime.now().replace(hour=14)+timedelta(days=1)).timestamp()),'1d')
+        start = int(datetime.now().replace(hour=6, minute=0,second=0).timestamp())
+        end = int((datetime.now().replace(hour=20,minute=0,second=0)+timedelta(days=1)).timestamp())
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock, start, end,'1d')
         res = requests.get(url)
+        debug(str(datetime.fromtimestamp(start))+" "+str(datetime.fromtimestamp(end))+" "+url)
         # Convert .json into nested dictionary format
         data = res.json()
-        # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body
+        # Save a sub-dictionary of result so we type less code - everything we care about can be accessed inside body 
         chart = data['chart']
         result = chart['result']
         if result == None: raise ValueError
         start = datetime.fromtimestamp(int(result[0]['meta']["currentTradingPeriod"]['regular']['start'])).time()
         end = datetime.fromtimestamp(int(result[0]['meta']["currentTradingPeriod"]['regular']['end'])).time()
         return start, end
+
+
+    def getTimeOnMarket(self, start, end, interval=None):
+        '''
+        Returns the number of intervals that the stock was actively traded in the indicated time span
+        start - datetime object representing start date and time
+        end - datetime object representing end date and time
+        interval - optional, allows user to specify interval.
+                    uses object interval if not set
+        Returns - an integer representing the number of intervals that the stock was traded in the period given
+        Note: Converts any interval >= a day into stock days - only as long as trade end - trade start
+        '''
+        if interval == None: interval = self.interval
+        currentDay = start.date()
+        market_start, market_end = self.getHours()
+        marketTime = timedelta(days=0)
+        while(currentDay.day <= end.day):
+            if currentDay.weekday() > 4:
+                currentDay += timedelta(days=1)
+                continue
+            if start.time() > market_end and currentDay.day == start.day:
+                currentDay += timedelta(days=1)
+                continue
+            if end.time() < market_start and currentDay.day == end.day:
+                currentDay += timedelta(days=1)
+                continue
+
+
+            day_start = market_start
+            if market_start < start.time() <= market_end and currentDay == start.date(): day_start = start.time()
+
+            day_end = market_end
+            if market_start <= end.time() < market_end and currentDay == end.date(): day_end = end.time()
+
+            marketTime += datetime.combine(date.today(), day_end) - datetime.combine(date.today(),day_start)
+
+            print(currentDay.isoformat(), day_start.isoformat(), day_end.isoformat(), marketTime)
+            currentDay += timedelta(days=1)
+
+        fixedInterval = DataCollector.INTERVALS[interval]
+        if DataCollector.INTERVALS[interval] >= timedelta(days=1):
+            fixedInterval = (datetime.combine(date.today(), market_end) - datetime.combine(date.today(),market_start)) *  (DataCollector.INTERVALS[interval] / timedelta(days=1))
+
+        time_on_market = math.floor(marketTime/fixedInterval)
+        return time_on_market
+
+
+    def findTradeStart(self, end, numIntervals, interval=None):
+        '''
+        Return the start date that makes it so that there are numPoints intervals on the market between the start and end date
+        end - datetime object specifying endpoint
+        numIntervals - the number of intervals of trading time needed
+        interval - interval used. Defaults to stock interval
+        '''
+        if interval == None: interval = self.interval
+        intervalTotal = 0
+        currentDay = end.date()
+        market_start, market_end = self.getHours()
+        while (intervalTotal < numIntervals):
+            if currentDay.weekday() > 4:
+                currentDay -= timedelta(days=1)
+                continue
+            if end.time() < market_start and currentDay.day == end.day:
+                currentDay -= timedelta(days=1)
+                continue
+
+            day_end = market_end
+            if market_start <= end.time() < market_end and currentDay == end.date(): day_end = end.time()
+
+            day_intervals = math.floor((datetime.combine(currentDay, day_end) - datetime.combine(currentDay, market_start)) / DataCollector.INTERVALS[interval])
+            if day_intervals + intervalTotal > numIntervals:
+                intervals_needed = numIntervals - intervalTotal
+                return datetime.combine(currentDay, day_end) - (intervals_needed * DataCollector.INTERVALS[interval])
+            else:
+                intervalTotal += day_intervals
+                currentDay -= timedelta(days=1)
 
 
     def collect(self, endPoint, numPoints, _interval=None):
@@ -555,9 +632,9 @@ class DataCollector:
         while (count < numPoints):
             # Get start and end of trading day
             startStamp = int(datetime.combine(currentPoint, startTime).timestamp())
-            endStamp = int(datetime.combine(currentPoint, end).timestamp())
-            url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,startStamp,endStamp,self.interval)
-            print(datetime.combine(currentPoint, startTime),datetime.combine(currentPoint, end),url)
+            endStamp = int(datetime.combine(currentPoint, end).timestamp()) + 3600
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,startStamp,endStamp,_interval)
+            debug(str(datetime.combine(currentPoint, startTime))+" "+str(datetime.fromtimestamp(endStamp))+" "+url)
             res = requests.get(url)
             # Convert .json into nested dictionary format
             data = res.json()
@@ -571,11 +648,17 @@ class DataCollector:
                 attempts = 0
                 for ind in dt:
                     value = df.loc[ind][self.metric]
+                    print(ind, value)
                     if value == np.nan: continue
+                    if datetime.fromisoformat(ind) > datetime.fromtimestamp(endPoint): continue
+                    '''
+                    if end < datetime.fromisoformat(ind).time():
+                        print(datetime.fromisoformat(ind),end)
+                        break
+                    '''
                     index.append(ind)
                     points.append(value)
                     count += 1
-                    print(value,count)
                     if count >= numPoints: break
             except : pass
             currentPoint -= timedelta(days=1)
@@ -584,8 +667,9 @@ class DataCollector:
 
         index.reverse()
         points.reverse()
-        self.dateTimeIndex = index
+        print(index)
         print(points)
+        self.dateTimeIndex = index
         self.mainData = patch_data(points)
 
 
@@ -599,7 +683,7 @@ class DataCollector:
         debug("collecting data for "+self.stock+"...")
         # Get data in .json format
         url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,self.start,self.end,self.interval)
-        #print(url)
+        debug(str(datetime.fromtimestamp(self.start))+" "+ str(datetime.fromtimestamp(self.end))+" "+url)
         res = requests.get(url)
         # Convert .json into nested dictionary format
         data = res.json()
@@ -758,9 +842,10 @@ def parse(sector):
     '''
 
 def main():
-    if (DataCollector.setup(True)):
-        print("hello world")
-
+    stock = DataCollector('ORCL','1m','close')
+    start = datetime(2019,11,12,21,30)
+    end = datetime(2019,11,13,10,30)
+    print(stock.getTimeOnMarket(start,end))
 
 
 

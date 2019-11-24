@@ -7,10 +7,9 @@ from numpy import newaxis
 from keras.layers import Dense, Activation, Dropout, LSTM
 from keras.models import Sequential, load_model as load
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-from keras.backend import get_session
 import tensorflow as tf
-import stock_components.sourceCode.stock_predictor as Predictor
-from stock_components.sourceCode.data_collector import convert_to_unix, DataCollector as DC
+import sourceCode.stock_predictor as Predictor
+from sourceCode.data_collector import convert_to_unix, DataCollector as DC
 import random
 from threading import Thread
 
@@ -69,7 +68,7 @@ class stock_LSTM:
     def load_model(self, filepath):
         debug('[Model] Loading model from file %s' % filepath)
         self.model = load(filepath)
-        self.session = get_session()
+        self.session = tf.compat.v1.get_default_session()
         self.model._make_predict_function()
         self.graph = tf.compat.v1.get_default_graph()
         self.graph.finalize()
