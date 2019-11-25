@@ -3,20 +3,23 @@ __copyright__ = "Jakob Aungiers 2018"
 __version__ = "2.0.0"
 __license__ = "MIT"
 
+
 import os
 import json
 from datetime import time, date, datetime, timedelta
+from keras.backend import clear_session
 import math
 import matplotlib.pyplot as plt
-import stock_components.sourceCode.stock_LSTM as stockModel
-import stock_components.sourceCode.data_collector as DC
-import math
+import sourceCode.stock_LSTM as stockModel
+import sourceCode.data_collector as DC
 import numpy as np
 import pandas as pd
 import random
 from threading import Thread
 
 environment = os.path.join( os.path.dirname ( __file__), os.path.pardir)
+
+
 
 class DataFormatter():
     """     A class for loading and transforming 1D arrays of stock data into normalized windows    """
@@ -29,9 +32,9 @@ class DataFormatter():
         self.data = DC.patch_data(data)
         self.data_len = len(data)
         # Range of the data
-        self.data_range = None
+        self.data_range = max(data) - min(data)
         # Median of the data
-        self.median = None
+        self.median = np.median(data)
         self.seq_len = seq_len
         # Go ahead and normalize
         self.data = self.normalize()
@@ -67,8 +70,6 @@ class DataFormatter():
         Normalise window with a base value of zero
         '''
         if len(data) == 0 : data = self.data
-        self.data_range = max(data) - min(data)
-        self.median = np.median(data)
         normalized_data = []
         for point in data:
             normalized_data.append ((point - self.median) / self.data_range)
@@ -165,7 +166,7 @@ def compileData(stockCollector, seq_len):
         compiled.append(np.transpose(np.asarray(window)))
     return np.asarray(compiled)
 
-def historical_prediction(stock, startArray, endArray, interval, metric):
+def historical_prediction(stock, start, end, interval, metric):
     '''
     stock       -   ticker of the stock you want to predict
     startArray  -   start datetime array of the form [year, month, day, hour, minute]
@@ -175,161 +176,278 @@ def historical_prediction(stock, startArray, endArray, interval, metric):
     Note: start and end are inclusive, i.e. they will not "round" to the next date / time
     Note: interval is self-regulating and will throw errors if too small
     '''
-    start = DC.convert_to_unix(startArray[0],startArray[1],startArray[2],startArray[3],startArray[4])
-    end = DC.convert_to_unix(endArray[0],endArray[1],endArray[2],endArray[3],endArray[4])
-
+    startDT = datetime.fromtimestamp(start)
+    endDT = datetime.fromtimestamp(end)
+    numDays = math.ceil((endDT.date() - startDT.date())  / timedelta(days=1))+1
+    tempCollector = DC.DataCollector(stock, interval, metric)
+    neededPoints = tempCollector.getTimeOnMarket(startDT,endDT)
+    neededPoints += 24
     dataEnd = datetime.fromtimestamp(end)
 
     # NeededPoints = time elapsed / interval + 24 (24 points before first prediction) - 1 (don't need to collect end prediction point)
-    neededPoints = int((datetime.fromtimestamp(end) - datetime.fromtimestamp(start))/DC.DataCollector.INTERVALS[interval] + 24 - 1)
     print(neededPoints,"points needed for",stock,"prediction from",datetime.fromtimestamp(start),"to",dataEnd)
+   
     try:
         testCollector = DC.DataCollector.fromEndpoint(stock, end, neededPoints, interval, metric)
         df = DataFormatter(testCollector.mainData, 24)
         inputx = compileData(testCollector, 24)
     except: return f'stock {stock} does not have enough associated data' 
-    #model = stockModel.stock_LSTM()
-    #model.load_model("data\\mainModel.h5")
+
     prediction = predict(inputx)
+    clear_session()
     return df.de_normalize(prediction)
     
-def future_prediction(stock, end, interval, metric, __dev_start=None, __dev_output=None):
+def future_prediction(stock, end_unix, interval, metric, start_unix=None):
     '''
     stock       -   ticker of the stock you want to predict
     end         -   UNIX-formatted timestamp for ending time/date of prediction
     interval    -   Smallest interval of predicted points desired - '1m', '1h', or '1d'
     metric      -   Measure of stock value - either 'open', 'close', 'high', or 'low'
     Note: prediction will always start at the next interval that does not currently have a prediction
-    Note: interval is self-regulating and will throw errors if too small
+    Note: interval does not regulate and must be checked before making predictions
     '''
-    now = datetime.now()
-    if __dev_start != None: now = datetime.fromtimestamp(__dev_start)
+    
+    # Set start point of prediction
+    if start_unix != None: 
+        predictionStart = datetime.fromtimestamp(start_unix)
+    else: predictionStart = datetime.now()
+
+    predictionEnd = datetime.fromtimestamp(end_unix)
+
+    neededPoints = DC.DataCollector(stock, interval, metric).getTimeOnMarket(predictionStart,predictionEnd)
+## Determine intervals, define long/short variable values
     if interval == '1m': 
-        print('using 1m interval')
-        formatted_now = datetime(year=now.year, month = now.month, day = now.day, hour = now.hour, minute=now.minute)
+        # Reconstruct the date without any time scale smaller than minutes
+        formatted_start = datetime(year=predictionStart.year, month=predictionStart.month, day=predictionStart.day, hour=predictionStart.hour, minute=predictionStart.minute)
+        formatted_end   = datetime(year = predictionEnd.year, month = predictionEnd.month, day = predictionEnd.day, hour = predictionEnd.hour, minute = predictionEnd.minute)
+        
+        # Furthest short prediction is 30 mins, need 24 points per prediction
         shortInterval = '1m'
-        longInterval = '15m'
-        # Furthest prediction is 30 mins, need 24 points per prediction
-        shortPredictions = 30;
-        shortPoints = shortPredictions*24;
+        max_short_output = 30
+        short_output_count = max_short_output if neededPoints > max_short_output else neededPoints
+        short_input_count = short_output_count*24
+
         # Furthest prediction is 360 mins, need 24 points per prediction, divided by 15min interval
-        longPredictions = int(360/15)
-        longPoints = longPredictions*24;
-        shortLongConversion = 15;
+        longInterval = '15m'
+        max_long_output = int(360/15) 
+        intervalConversion = DC.DataCollector.INTERVALS[longInterval] // DC.DataCollector.INTERVALS[shortInterval]
+        long_output_count = max_long_output if math.ceil(neededPoints//intervalConversion) > max_long_output else neededPoints//intervalConversion
+        long_input_count = long_output_count*24
+
     elif interval == '1h': 
-        formatted_now = datetime(year=now.year, month = now.month, day = now.day, hour = now.hour)
-        print('using 1h interval')
-        shortInterval = '1h'
-        longInterval = '1d'
+        # Reconstruct the date without any time scale smaller than hours
+        formatted_start = datetime(year=predictionStart.year, month=predictionStart.month, day=predictionStart.day, hour=predictionStart.hour)
+        formatted_end   = datetime(year = predictionEnd.year, month = predictionEnd.month, day = predictionEnd.day, hour = predictionEnd.hour)
+
         # Furthest prediction is 24 hrs, need 24 points per prediction
-        shortPredictions = 24;
-        shortPoints = shortPredictions*24;
+        shortInterval = '1h'
+        max_short_output = 24;
+        short_output_count = max_short_output if neededPoints > max_short_output else neededPoints
+        short_input_count = short_output_count*24;
+
         # Furthest prediction is 720 hrs, need 24 points per prediction, divided by 24 hr interval
-        longPredictions = int(720/24)
-        longPoints = longPredictions*24;
-        shortLongConversion = 24;
-    else : 
-        formatted_now = datetime(year=now.year, month = now.month, day = now.day)
-        print('using 1d interval')
-        shortInterval = '1d'
-        longInterval = '1wk'
-        # Furthest prediction is 30 days, need 24 points per prediction
-        shortPredictions = 30;
-        shortPoints = shortPredictions*24;
-        # Furthest prediction is 180 days, need 24 points per prediction, divided by 7 day interval
-        longPredictions = int(math.round(180/7))
-        longPoints = longPredictions*24;
-        shortLongConversion = 7;
+        longInterval = '1d'
+        max_long_output = int(720/24)
+        intervalConversion = DC.DataCollector.INTERVALS[longInterval] // DC.DataCollector.INTERVALS[shortInterval]
+        long_output_count = max_long_output if math.ceil(neededPoints/intervalConversion) > max_long_output else neededPoints//intervalConversion
+        long_input_count = long_output_count*24;
 
+   
 
-    collectionEnd = (formatted_now - DC.DataCollector.INTERVALS[shortInterval]).timestamp()
-    shortCollector = DC.DataCollector.fromEndpoint(stock, collectionEnd, shortPoints, shortInterval, metric)
-    collectionEnd = (formatted_now - DC.DataCollector.INTERVALS[longInterval]).timestamp()
-    longCollector = DC.DataCollector.fromEndpoint(stock, collectionEnd, longPoints, longInterval, metric)
-    print("Short:",shortCollector.mainData)
-    print("Long:",longCollector.mainData)
+    # Set the endpoint for collection to be one interval before the current time
+    shortCollectionEnd = (formatted_start - DC.DataCollector.INTERVALS[shortInterval]).timestamp()
 
+    # Setup a DataCollector for each interval
+    shortCollector = DC.DataCollector.fromEndpoint(stock, shortCollectionEnd, short_input_count, shortInterval, metric)
+    
+
+## Compile the data into windows
     shortInputWindows = []
-    longInputWindows = []
+
     shortData = []
-    longData = []
-    shortData.append(DataFormatter(shortCollector.mainData, 24).data)
-    longData.append(DataFormatter(longCollector.mainData, 24).data)
-    for i in range(4):
-        shortData.append(DataFormatter(shortCollector.competitorData[i], 24).data)
-        longData.append(DataFormatter(shortCollector.competitorData[i], 24).data)
-    for i in range(11):
-        shortData.append(DataFormatter(shortCollector.indicatorData[i], 24).data)
-        longData.append(DataFormatter(longCollector.indicatorData[i], 24).data)
 
-    for i in range(1,shortPredictions+1):
-        shortWindow = []
-        for j in range(16):
-            shortStrip = []
-            for k in range(1,25):
-                shortStrip.append(shortData[j][len(shortData[j])-(k*i)])
-            shortWindow.append(shortStrip)
-        shortInputWindows.append(shortWindow)
- 
+    # Normalize data for short and long prediction streams and
+    # Add each stock's data array to the overall data array for the central stock
 
-    for i in range(1,longPredictions+1):
-        longWindow = []
-        for j in range(16):
-            longStrip = []
-            for k in range(1,25):
-                longStrip.append(longData[j][len(longData[j])-(k*i)])
-            longWindow.append(longStrip)
-        longInputWindows.append(longWindow)
+    ## Set up the model
+    model=stockModel.stock_LSTM()
+    model.load_model(os.path.join(environment,'data\\mainModel.h5'))
+
+    if short_output_count > 0:
+        shortData.append(DataFormatter(shortCollector.mainData, 24).data)
+        for i in range(4):
+            shortData.append(DataFormatter(shortCollector.competitorData[i], 24).data)
+        for i in range(11):
+            shortData.append(DataFormatter(shortCollector.indicatorData[i], 24).data)
+
+        # Get the interleaved data points and format them into windows
+        for i in range(1,short_output_count+1):
+            shortWindow = []
+            for j in range(16):
+                shortStrip = []
+                for k in range(1,25):
+                    shortStrip.append(shortData[j][len(shortData[j])-(k*i)])
+                shortWindow.append(shortStrip)
+            shortInputWindows.append(shortWindow)
+
+        ## Create and launch short prediction threads
+        num_threads = 8
+        short_predictions_per_thread = math.ceil(short_output_count / num_threads)
+
+        # Create an empty predictions list (to be filled by prediction threads)
+        shortPredictionsList = np.asarray(np.zeros((short_output_count,)))
+
+        # Set up thread array and indexing info
+        threads = []
+        start = 0
+        end = short_predictions_per_thread-1
+        for i in range(num_threads):
+            # Create and start new thread 
+            threads.append(Thread(target=predictions, args=(model, shortInputWindows, range(start,end), shortPredictionsList, 1)))
+            threads[-1].start()
+
+            # Set new start and end points
+            start = end
+            end += short_predictions_per_thread
+        
+            # Correct end point if it goes past the number of outputs we're supposed to have
+            if end >= short_output_count:
+                end = short_output_count-1
+
+    ## Wait for threads to finish
+        for i in range(num_threads):  threads[i].join()
+
+    if long_output_count > 0:
+        longCollectionEnd =  (formatted_start - DC.DataCollector.INTERVALS[ longInterval]).timestamp()
+        longCollector  = DC.DataCollector.fromEndpoint(stock,  longCollectionEnd,  long_input_count,  longInterval, metric)
+        longInputWindows = []
+        longData = []
+
+        longData.append(DataFormatter(longCollector.mainData, 24).data)
+        for i in range(4):
+            longData.append(DataFormatter(longCollector.competitorData[i], 24).data)
+        for i in range(11):
+            longData.append(DataFormatter(longCollector.indicatorData[i], 24).data)
+
+        for i in range(1,long_output_count+1):
+            longWindow = []
+            for j in range(16):
+                longStrip = []
+                for k in range(1,25):
+                    longStrip.append(longData[j][len(longData[j])-(k*i)])
+                longWindow.append(longStrip)
+            longInputWindows.append(longWindow)
+
+        ## Create and laumch long prediction threads
+        # Create an empty predictions list (to be filled by prediction threads)
+        longPredictionsList = np.asarray(np.zeros(long_output_count*intervalConversion,))
+
+        # Set up thread array and indexing info
+        long_predictions_per_thread = math.ceil(long_output_count / num_threads)
+        threads=[]
+        start=0
+        end = long_predictions_per_thread-1
+
+        for i in range(num_threads):
+            #Create and start new thread
+            threads.append(Thread(target=predictions, args=(model, longInputWindows, range(start,end), longPredictionsList, 15)))
+            threads[-1].start()
+
+            # Set new start and end points
+            start = end
+            end += long_predictions_per_thread
+
+             # Correct end point if it goes past the number of outputs we're supposed to have
+            if end >= long_output_count:
+                end = long_output_count-1
+
+        # Wait for threads to finish
+        for i in range(num_threads): threads[i].join()
+
+        # Patch missing points between long interval predictions
+        segmentStart = 0
+        segmentEnd = intervalConversion-1
+        for i in range(long_output_count):
+            # But only if there's no data in the range between long predictions
+            longPredictionsList = DC.average_fill(longPredictionsList, segmentStart,segmentEnd)
+            segmentStart = segmentEnd
+            segmentEnd += intervalConversion
+            if segmentEnd > long_input_count: 
+                segmentEnd = long_input_count
+
+    if long_output_count > 0: predictionsList = longPredictionsList
+    else: predictionsList = np.asarray(np.zeros((short_output_count*intervalConversion)))
+    # Replace values in long predictions list with values in short prediction list (if they are the same point in time)
+    for i in range(len(shortPredictionsList)):
+        predictionsList[i] = shortPredictionsList[i]
+
+    #Clean up prediction model to prepare for next prediction
+    clear_session()
+
+    return predictionsList
+
+def make_prediction (stock, startArray, endArray, interval, metric):
+    startDT = datetime(startArray[0], startArray[1], startArray[2],startArray[3],startArray[4])
+    endDT = datetime(endArray[0], endArray[1], endArray[2],endArray[3],endArray[4])
+    now = datetime(datetime.now().year,datetime.now().month, datetime.now().day, datetime.now().hour, datetime.now().minute)
+    if endDT > now: 
+        tempCollector = DC.DataCollector(stock, interval, metric)
+        required_intervals = tempCollector.getTimeOnMarket(now,endDT) / 2
+        required_historic_start = tempCollector.findTradeStart(now, required_intervals)
+        historic_start = (startDT+DC.DataCollector.INTERVALS[interval]).timestamp() if startDT < required_historic_start else (required_historic_start+DC.DataCollector.INTERVALS[interval]).timestamp()
+
+        h_predictions = historical_prediction(stock, historic_start, now.timestamp(), interval, metric)
+        f_predictions = future_prediction(stock, endDT.timestamp(), interval, metric)
+        df = DataFormatter(h_predictions,24)
+
+        output = DC.DataCollector.fromDate(stock, historic_start, now.timestamp(), interval, metric, False).dateCollect()
+        return [output, np.asarray(np.append(h_predictions,df.de_normalize(f_predictions),0))]
+
+    else: 
+        output = DC.DataCollector.fromDate(stock, startDT.timestamp(), endDT.timestamp(), interval, metric, False).dateCollect()
+        return [output, historical_prediction(stock, startDT.timestamp(), endDT.timestamp(), interval, metric)]
 
 
 
-
-    shortPredictionPoints = []
-    for i in shortInputWindows:
-        shortPredictionPoints.append(predict(np.reshape(np.transpose(np.asarray(i)), (1,24,16,))))
-
-    longPredictionPoints = []
-    for i in longInputWindows:
-        longPredictionPoints.append(predict(np.reshape(np.transpose(np.asarray(i)), (1,24,16,))))
-
-
-    plot_results(shortPredictionPoints,[] if __dev_start == None else __dev_output)
-
-
+def predictions(model, windows, indices, predictions, interval=1):
+    for i in indices:
+         predictions[i*interval-1] = model.model.predict_on_batch(np.reshape(np.transpose(np.asarray(windows[i])), (1,24,16,)))
 
 
 def get_actual_data(stock_ticker, start, end, interval, metric):
-    output = DC.DataCollector.fromDateArray('AAPL',start,end,interval,metric,False).dateCollect()
+    output = DC.DataCollector.fromDateArray(stock_ticker,start,end,interval,metric,False).dateCollect()
     return output
 
 
 def main():
     '''
-    pastStart = DC.convert_to_unix(2019,10,7,12,30)
-    pastEnd = DC.convert_to_unix(2019,10,7,13,0)
-
-    end = DC.convert_to_unix(2019,10,28,12,30)
+    Main method
+    '''
+    start = DC.convert_to_unix(2019,11,12,12,30)
+    end =   DC.convert_to_unix(2019,11,25,16,0)
 
     DC.DataCollector.setup()
-
-    output = DataFormatter(DC.DataCollector.fromDate('AAPL',pastStart, pastEnd, '1m', 'close', False).dateCollect(),24).data
-
-
-    future_prediction('AAPL',end,'1m','close', pastStart, output)
+    output, prediction = make_prediction('DOW',[2019,11,21,12,30],[2019,11,21,16,0],'1m','close')
+    plot_results(prediction, output)
+    #print(stockModel.performance(output_df.normalize(h_prediction),output_df.normalize(output)))
     '''
-
-    
-    start = [2019,10,7,9,30]
-    end = [2019,10,7,11,30]
+    start = [2019,11,11,9,30]
+    end = [2019,11,12,16,0]
 
     output = DC.DataCollector.fromDateArray('AAPL',start,end,'1m','close',False).dateCollect()
     prediction = historical_prediction('AAPL',start,end,'1m','close')
-    #plot_results(prediction, output)
-    print('Output ' + str(output))
-    print('Prediction ' + str(prediction))
+    plot_results(prediction, output)
+    print('Output ' + str(len(output)))
+    print('Prediction ' + str(len(prediction)))
     print(stockModel.performance(prediction, output))
-    
+    '''
+
+    # DC.DataCollector.fromEndpoint('AAPL',pastEnd, 90, '15m', 'close')
 
     
 if __name__ == '__main__':
     main()
+
+
+
+
