@@ -396,22 +396,25 @@ def make_prediction (stock, startArray, endArray, str_interval, metric):
         tempCollector = DC.DataCollector(stock, str_interval, metric)
         required_intervals = math.ceil(tempCollector.getTimeOnMarket(now,endDT) / 2)
         required_historic_start = tempCollector.findTradeStart(now, required_intervals)
-        historic_start = startDT if startDT+interval < required_historic_start else required_historic_start+interval
+        historic_start = startDT if startDT < required_historic_start else required_historic_start
 
-        h_predictions = historical_prediction(stock, historic_start.timestamp(), now.timestamp(), str_interval, metric)
+        h_predictions = historical_prediction(stock, historic_start.timestamp(), (now).timestamp(), str_interval, metric)
         f_predictions = future_prediction(stock, endDT.timestamp(), str_interval, metric)
         df = DataFormatter(h_predictions,24)
 
-        output = DC.DataCollector.fromDate(stock, historic_start.timestamp(), now.timestamp(), str_interval, metric, False).dateCollect()
+        last_hist = tempCollector.findTradeStart(historic_start,1)
+        output = DC.DataCollector.fromDate(stock, last_hist.timestamp(), now.timestamp(), str_interval, metric, False).dateCollect()
+        output=output[len(output)-len(h_predictions)-1:-1]
+        #output = DC.DataCollector.fromEndpoint(stock,(now-interval).timestamp(),len(h_predictions),interval, metric,False).mainData
         predictions = np.asarray(np.append(h_predictions,df.de_normalize(f_predictions),0))
         performance = stockModel.performance(DataFormatter(output,24).data,h_predictions)
-        return [output, predictions, 1]
+        return [output, predictions, performance]
 
     else: 
         output = DC.DataCollector.fromDate(stock, startDT.timestamp(), endDT.timestamp(), str_interval, metric, False).dateCollect()
         h_predictions = historical_prediction(stock, startDT.timestamp(), endDT.timestamp(), str_interval, metric)
         performance = stockModel.performance(DataFormatter(output,24).data,h_predictions)
-        return [output, h_predictions, 1]
+        return [output, h_predictions, performance]
 
 
 
@@ -430,10 +433,10 @@ def main():
     Main method
     '''
     start = DC.convert_to_unix(2019,11,19,12,30)
-    end =   DC.convert_to_unix(2019,11,26,16,0)
+    end =   DC.convert_to_unix(2019,11,26,11,30)
 
     DC.DataCollector.setup()
-    output, prediction, performance = make_prediction('DOW',[2019,11,21,9,30],[2019,11,29,11,0],'1h','close')
+    output, prediction, performance = make_prediction('AAPL',[2019,11,25,9,30],[2019,11,26,16,0],'1m','close')
     plot_results(prediction, output)
     print(performance)
     #print(stockModel.performance(output_df.normalize(h_prediction),output_df.normalize(output)))

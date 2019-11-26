@@ -521,8 +521,8 @@ class DataCollector:
         '''
         Returns the start and end of regular trading time for this stock
         '''
-        start = int(datetime.now().replace(hour=6, minute=0,second=0).timestamp())
-        end = int((datetime.now().replace(hour=20,minute=0,second=0)+timedelta(days=1)).timestamp())
+        start = int((datetime.now().replace(hour=6, minute=0,second=0)-timedelta(days=4)).timestamp())
+        end = int((datetime.now().replace(hour=20,minute=0,second=0)+timedelta(days=3)).timestamp())
         url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock, start, end,'1d')
         res = requests.get(url)
         debug(str(datetime.fromtimestamp(start))+" "+str(datetime.fromtimestamp(end))+" "+url)
@@ -581,7 +581,7 @@ class DataCollector:
             #print(currentDay.isoformat(), day_start.isoformat(), day_end.isoformat(), marketTime)
             currentDay += timedelta(days=1)
 
-            time_on_market += math.floor(marketTime/fixedInterval)
+            time_on_market += math.ceil(marketTime/fixedInterval) 
         
         return time_on_market
 
