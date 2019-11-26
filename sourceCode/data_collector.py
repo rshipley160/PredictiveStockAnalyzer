@@ -29,7 +29,7 @@ import pickle
 import math
 import sys
 
-printDebug = True
+printDebug = False
 
 def debug(string):
     '''
@@ -551,6 +551,13 @@ class DataCollector:
         currentDay = start.date()
         market_start, market_end = self.getHours()
         marketTime = timedelta(days=0)
+
+        fixedInterval = DataCollector.INTERVALS[interval]
+        if DataCollector.INTERVALS[interval] >= timedelta(days=1):
+            fixedInterval = ((datetime.combine(date.today(), market_end) - datetime.combine(date.today(),market_start)) *  (DataCollector.INTERVALS[interval] / timedelta(days=1)))
+
+        time_on_market = 0
+
         while(currentDay.day <= end.day):
             if currentDay.weekday() > 4:
                 currentDay += timedelta(days=1)
@@ -569,16 +576,13 @@ class DataCollector:
             day_end = market_end
             if market_start <= end.time() < market_end and currentDay == end.date(): day_end = end.time()
 
-            marketTime += datetime.combine(date.today(), day_end) - datetime.combine(date.today(),day_start)
+            marketTime = datetime.combine(date.today(), day_end) - datetime.combine(date.today(),day_start)
 
-            print(currentDay.isoformat(), day_start.isoformat(), day_end.isoformat(), marketTime)
+            #print(currentDay.isoformat(), day_start.isoformat(), day_end.isoformat(), marketTime)
             currentDay += timedelta(days=1)
 
-        fixedInterval = DataCollector.INTERVALS[interval]
-        if DataCollector.INTERVALS[interval] >= timedelta(days=1):
-            fixedInterval = (datetime.combine(date.today(), market_end) - datetime.combine(date.today(),market_start)) *  (DataCollector.INTERVALS[interval] / timedelta(days=1))
-
-        time_on_market = math.floor(marketTime/fixedInterval)
+            time_on_market += math.floor(marketTime/fixedInterval)
+        
         return time_on_market
 
 
@@ -605,7 +609,7 @@ class DataCollector:
             if market_start <= end.time() < market_end and currentDay == end.date(): day_end = end.time()
 
             day_intervals = math.floor((datetime.combine(currentDay, day_end) - datetime.combine(currentDay, market_start)) / DataCollector.INTERVALS[interval])
-            if day_intervals + intervalTotal > numIntervals:
+            if day_intervals + intervalTotal >= numIntervals:
                 intervals_needed = numIntervals - intervalTotal
                 return datetime.combine(currentDay, day_end) - (intervals_needed * DataCollector.INTERVALS[interval])
             else:
@@ -648,7 +652,7 @@ class DataCollector:
                 attempts = 0
                 for ind in dt:
                     value = df.loc[ind][self.metric]
-                    print(ind, value)
+                    #print(ind, value)
                     if value == np.nan: continue
                     if datetime.fromisoformat(ind) > datetime.fromtimestamp(endPoint): continue
                     '''
@@ -667,8 +671,8 @@ class DataCollector:
 
         index.reverse()
         points.reverse()
-        print(index)
-        print(points)
+        #print(index)
+        #print(points)
         self.dateTimeIndex = index
         self.mainData = patch_data(points)
 
@@ -682,7 +686,7 @@ class DataCollector:
         if self.mainData != []: return self.mainData
         debug("collecting data for "+self.stock+"...")
         # Get data in .json format
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,self.start,self.end,self.interval)
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/{}?period1={}&period2={}&interval={}".format(self.stock,int(self.start),int(self.end),self.interval)
         debug(str(datetime.fromtimestamp(self.start))+" "+ str(datetime.fromtimestamp(self.end))+" "+url)
         res = requests.get(url)
         # Convert .json into nested dictionary format
@@ -796,9 +800,6 @@ class DataCollector:
             if seek_index >= len(DataCollector.sortedStocks[self.getIndustry()]): raise ValueError
 
 
-    
-
-
 def parse(sector):
     '''
     May be useful in the future for getting the list of stocks in each sector
@@ -842,9 +843,9 @@ def parse(sector):
     '''
 
 def main():
-    stock = DataCollector('ORCL','1m','close')
-    start = datetime(2019,11,12,21,30)
-    end = datetime(2019,11,13,10,30)
+    stock = DataCollector('ORCL','1d','close')
+    start = datetime(2019,11,25,21,30)
+    end = datetime(2019,11,29,10,30)
     print(stock.getTimeOnMarket(start,end))
 
 
